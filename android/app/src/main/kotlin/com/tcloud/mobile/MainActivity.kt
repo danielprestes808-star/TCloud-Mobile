@@ -3102,16 +3102,7 @@ private fun listGalleryMedia(
             return emptyList()
         }
 
-        val array =
-            try {
-                org.json.JSONArray(
-                    file.readText(
-                        Charsets.UTF_8
-                    )
-                )
-            } catch (_: Throwable) {
-                org.json.JSONArray()
-            }
+        val array = TCloudBackgroundQueueStore.read(applicationContext)
 
         val result =
             mutableListOf<
@@ -3159,50 +3150,7 @@ private fun listGalleryMedia(
             return
         }
 
-        val source =
-            try {
-                org.json.JSONArray(
-                    file.readText(
-                        Charsets.UTF_8
-                    )
-                )
-            } catch (_: Throwable) {
-                org.json.JSONArray()
-            }
-
-        val kept =
-            org.json.JSONArray()
-
-        for (index in 0 until source.length()) {
-            val item =
-                source.optJSONObject(index)
-                    ?: continue
-
-            if (
-                !completed.contains(
-                    item.optString("uri")
-                )
-            ) {
-                kept.put(item)
-            }
-        }
-
-        val temp =
-            File(
-                file.parentFile,
-                file.name + ".tmp"
-            )
-
-        temp.writeText(
-            kept.toString(),
-            Charsets.UTF_8
-        )
-
-        if (file.exists()) {
-            file.delete()
-        }
-
-        temp.renameTo(file)
+        TCloudBackgroundQueueStore.removeUris(applicationContext, completed)
     }
 
     private fun generateVideoThumbnail(

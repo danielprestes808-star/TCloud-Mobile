@@ -89,25 +89,7 @@ class TCloudGalleryWorker(
     }
 
     private fun queueLength(): Int {
-        val file =
-            File(
-                applicationContext.filesDir,
-                QUEUE_FILE
-            )
-
-        if (!file.exists()) {
-            return 0
-        }
-
-        return try {
-            JSONArray(
-                file.readText(
-                    Charsets.UTF_8
-                )
-            ).length()
-        } catch (_: Throwable) {
-            0
-        }
+        return TCloudBackgroundQueueStore.count(applicationContext)
     }
 
     private fun notifyBackupStatus(
@@ -463,41 +445,14 @@ class TCloudGalleryWorker(
     private fun readQueue(
         file: File
     ): JSONArray {
-        if (!file.exists()) {
-            return JSONArray()
-        }
-
-        return try {
-            JSONArray(
-                file.readText(
-                    Charsets.UTF_8
-                )
-            )
-        } catch (_: Throwable) {
-            JSONArray()
-        }
+        return TCloudBackgroundQueueStore.read(applicationContext)
     }
 
     private fun writeQueue(
         file: File,
         values: JSONArray
     ) {
-        val temp =
-            File(
-                file.parentFile,
-                file.name + ".tmp"
-            )
-
-        temp.writeText(
-            values.toString(),
-            Charsets.UTF_8
-        )
-
-        if (file.exists()) {
-            file.delete()
-        }
-
-        temp.renameTo(file)
+        TCloudBackgroundQueueStore.mergeScanned(applicationContext, values, 4000)
     }
 
     private fun trimQueue(

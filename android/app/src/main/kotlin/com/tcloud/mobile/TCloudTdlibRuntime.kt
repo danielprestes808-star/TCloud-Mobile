@@ -224,7 +224,7 @@ object TCloudTdlibRuntime {
             .putLong(TCloudGalleryWorker.KEY_LAST_SCAN, 0L)
             .apply()
         try {
-            File(context.filesDir, TCloudGalleryWorker.QUEUE_FILE).delete()
+            TCloudBackgroundQueueStore.clear(context)
         } catch (_: Throwable) {}
     }
 
@@ -627,16 +627,7 @@ object TCloudTdlibRuntime {
             return true
         }
 
-        val source =
-            try {
-                JSONArray(
-                    queueFile.readText(
-                        Charsets.UTF_8
-                    )
-                )
-            } catch (_: Throwable) {
-                JSONArray()
-            }
+        val source = TCloudBackgroundQueueStore.read(context)
 
         if (source.length() == 0) {
             return true
@@ -778,12 +769,8 @@ object TCloudTdlibRuntime {
             }
         }
 
-        writeQueueAtomic(
-            queueFile,
-            kept
-        )
-
-        return kept.length() == 0
+        return TCloudBackgroundQueueStore
+            .reconcileProcessed(context, source, kept) == 0
     }
 
     private fun rememberUploadedUri(
@@ -1222,25 +1209,4 @@ private fun createTdObject(
         return destination
     }
 
-    private fun writeQueueAtomic(
-        file: File,
-        values: JSONArray
-    ) {
-        val temp =
-            File(
-                file.parentFile,
-                file.name + ".tmp"
-            )
-
-        temp.writeText(
-            values.toString(),
-            Charsets.UTF_8
-        )
-
-        if (file.exists()) {
-            file.delete()
-        }
-
-        temp.renameTo(file)
-    }
 }
