@@ -15,14 +15,17 @@ class TCloudApp extends StatelessWidget {
     return AnimatedBuilder(
       // TCLOUD_THEME_ROOT_EXACT_203
       animation: TCloudThemeController.instance,
-      builder: (context, _) => MaterialApp(
-        darkTheme: TCloudBrandTheme.dark,
-        themeMode: TCloudThemeController.instance.mode,
-        title: 'TCloud',
-        debugShowCheckedModeBanner: false,
-        theme: TCloudBrandTheme.light,
-        home: const LoginScreen(),
-      ),
+      builder: (context, _) {
+        final controller = TCloudThemeController.instance;
+        return MaterialApp(
+          darkTheme: TCloudBrandTheme.fromPreset(controller.preset),
+          themeMode: controller.mode,
+          title: 'TCloud',
+          debugShowCheckedModeBanner: false,
+          theme: TCloudBrandTheme.fromPreset(controller.preset),
+          home: const LoginScreen(),
+        );
+      },
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'tcloud_theme_preset.dart';
 
 /// Identidade visual oficial TCloud 2.0.
 abstract final class TCloudBrandTheme {
@@ -15,6 +16,81 @@ abstract final class TCloudBrandTheme {
   static const darkSurfaceAlt = Color(0xFF191C25);
   static const darkBorder = Color(0xFF2A2D37);
   static const darkText = Color(0xFFE9EAF0);
+
+  static ThemeData fromPreset(TCloudThemePreset preset) {
+    final base = preset.dark ? dark : light;
+    final foreground = preset.dark
+        ? const Color(0xFFF1F5F9)
+        : const Color(0xFF172033);
+    final muted = preset.dark
+        ? const Color(0xFFA7B0C0)
+        : const Color(0xFF627087);
+    final border = Color.alphaBlend(
+      foreground.withValues(alpha: .14),
+      preset.surface,
+    );
+    final scheme = ColorScheme.fromSeed(
+      seedColor: preset.accent,
+      brightness: preset.dark ? Brightness.dark : Brightness.light,
+      primary: preset.accent,
+      surface: preset.surface,
+    );
+    final radius = BorderRadius.circular(7);
+    return base.copyWith(
+      colorScheme: scheme,
+      scaffoldBackgroundColor: preset.background,
+      appBarTheme: base.appBarTheme.copyWith(
+        backgroundColor: preset.background,
+        foregroundColor: foreground,
+      ),
+      cardTheme: CardThemeData(
+        color: preset.surface,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: BorderSide(color: border),
+        ),
+      ),
+      navigationBarTheme: base.navigationBarTheme.copyWith(
+        backgroundColor: preset.surface,
+        indicatorColor: preset.accent.withValues(alpha: .18),
+      ),
+      inputDecorationTheme: base.inputDecorationTheme.copyWith(
+        fillColor: Color.alphaBlend(
+          foreground.withValues(alpha: .045),
+          preset.surface,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: radius,
+          borderSide: BorderSide(color: border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: radius,
+          borderSide: BorderSide(color: preset.accent, width: 1.4),
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: preset.accent,
+          foregroundColor: preset.dark ? Colors.white : const Color(0xFFFFFFFF),
+          shape: RoundedRectangleBorder(borderRadius: radius),
+        ),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: preset.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+      ),
+      bottomSheetTheme: base.bottomSheetTheme.copyWith(
+        backgroundColor: preset.surface,
+      ),
+      dividerColor: border,
+      textTheme: base.textTheme
+          .apply(bodyColor: foreground, displayColor: foreground)
+          .copyWith(
+            bodySmall: base.textTheme.bodySmall?.copyWith(color: muted),
+          ),
+    );
+  }
 
   static ThemeData get light {
     final scheme = ColorScheme.fromSeed(

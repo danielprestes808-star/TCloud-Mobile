@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/tcloud_theme_controller.dart';
+import '../theme/tcloud_theme_preset.dart';
 
 class TCloudThemeSelector extends StatelessWidget {
   const TCloudThemeSelector({super.key});
@@ -32,27 +33,97 @@ class TCloudThemeSelector extends StatelessWidget {
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 14),
-                  SegmentedButton<ThemeMode>(
-                    segments: const [
-                      ButtonSegment(
-                        value: ThemeMode.light,
-                        icon: Icon(Icons.light_mode_outlined),
-                        label: Text('Claro'),
-                      ),
-                      ButtonSegment(
-                        value: ThemeMode.dark,
-                        icon: Icon(Icons.dark_mode_outlined),
-                        label: Text('Escuro'),
-                      ),
-                      ButtonSegment(
-                        value: ThemeMode.system,
-                        icon: Icon(Icons.devices_outlined),
-                        label: Text('Sistema'),
-                      ),
-                    ],
-                    selected: {controller.mode},
-                    onSelectionChanged: (selection) {
-                      controller.setMode(selection.first);
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final columns = constraints.maxWidth >= 520 ? 3 : 2;
+                      return GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          childAspectRatio: 1.65,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                        ),
+                        itemCount: tcloudThemePresets.length,
+                        itemBuilder: (context, index) {
+                          final preset = tcloudThemePresets[index];
+                          final selected = controller.presetId == preset.id;
+                          return Semantics(
+                            button: true,
+                            selected: selected,
+                            label: 'Tema ${preset.name}',
+                            child: InkWell(
+                              onTap: () => controller.setPreset(preset.id),
+                              borderRadius: BorderRadius.circular(7),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 160),
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(7),
+                                  border: Border.all(
+                                    color: selected
+                                        ? preset.accent
+                                        : Theme.of(context).dividerColor,
+                                    width: selected ? 2 : 1,
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Row(
+                                          children: [
+                                            Expanded(
+                                              child: ColoredBox(
+                                                color: preset.background,
+                                              ),
+                                            ),
+                                            Expanded(
+                                              child: ColoredBox(
+                                                color: preset.surface,
+                                              ),
+                                            ),
+                                            Expanded(
+                                              child: ColoredBox(
+                                                color: preset.accent,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 7),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            preset.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        if (selected)
+                                          Icon(
+                                            Icons.check_circle,
+                                            size: 16,
+                                            color: preset.accent,
+                                          ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      );
                     },
                   ),
                 ],
