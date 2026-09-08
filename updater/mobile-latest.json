@@ -1,8 +1,8 @@
 {
-  "version": "1.1.14",
-  "versionCode": 95,
-  "apkUrl": "https://github.com/danielprestes808-star/TCloud-Releases/releases/download/mobile-v1.1.14/TCloud-Mobile-1.1.14.apk",
-  "sha256": "a05b31e193810bb90e509fe03d30a3c12e246366517eef84910c4281c893df59",
-  "notes": "Nova interface Fluent visivelmente aplicada, paleta grafite e violeta, novo logo, espaçamentos compactos e carrossel de mídias recentes.",
+  "version": "1.1.15",
+  "versionCode": 96,
+  "apkUrl": "https://github.com/danielprestes808-star/TCloud-Releases/releases/download/mobile-v1.1.15/TCloud-Mobile-1.1.15.apk",
+  "sha256": "59784960121d7a97d9148ac912defa5ebf800284ddd571513811a08d608ee114",
+  "notes": "Recuperação automática de mídias por identidade canônica quando o ID temporário do Telegram muda, com download em partes e retomada de arquivos grandes.",
   "mandatory": false
 }

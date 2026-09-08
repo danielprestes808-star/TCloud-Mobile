@@ -7,6 +7,7 @@ import '../models/tcloud_file.dart';
 import '../models/tcloud_file_page.dart';
 import '../models/tcloud_folder.dart';
 import '../telegram/tdlib_service.dart';
+import 'tcloud_canonical_ops.dart';
 import 'tcloud_core_catalog.dart';
 
 class _ResolvedMediaCacheEntry {
@@ -64,6 +65,7 @@ class TCloudRepository {
   static final instance = TCloudRepository._();
 
   final TdlibService _td = TdlibService.instance;
+  final TCloudCanonicalOps _canonicalOps = TCloudCanonicalOps();
   final Map<String, _ResolvedMediaCacheEntry> _resolvedMediaCache =
       <String, _ResolvedMediaCacheEntry>{};
   final Map<String, Future<TCloudFile>> _resolvedMediaInFlight =
@@ -1257,7 +1259,12 @@ class TCloudRepository {
 
     if (preferRemoteHistory) {
       final remote = await _refreshMediaFromRemoteHistory(file);
-      if (remote != null) return remote;
+      if (remote != null) {
+        final enriched = await TCloudCoreCatalog.instance.enrich(remote);
+        return enriched.coreFileId?.trim().isNotEmpty == true
+            ? enriched
+            : remote.copyWith(coreFileId: file.coreFileId);
+      }
     }
 
     const delays = <Duration>[
@@ -1304,7 +1311,10 @@ class TCloudRepository {
       final usable = resolved.fileId > 0 && (resolved.size > 0 || localUsable);
 
       if (usable) {
-        return resolved;
+        final enriched = await TCloudCoreCatalog.instance.enrich(resolved);
+        return enriched.coreFileId?.trim().isNotEmpty == true
+            ? enriched
+            : resolved.copyWith(coreFileId: file.coreFileId);
       }
     }
 
@@ -1312,7 +1322,12 @@ class TCloudRepository {
     // remota do histórico antes de depender do Core local.
     final refreshedFromHistory = await _refreshMediaFromRemoteHistory(best);
     if (refreshedFromHistory != null) {
-      return refreshedFromHistory;
+      final enriched = await TCloudCoreCatalog.instance.enrich(
+        refreshedFromHistory,
+      );
+      return enriched.coreFileId?.trim().isNotEmpty == true
+          ? enriched
+          : refreshedFromHistory.copyWith(coreFileId: file.coreFileId);
     }
 
     return TCloudCoreCatalog.instance.enrich(best);
@@ -1511,6 +1526,10 @@ class TCloudRepository {
     }
 
     if (result['_type']?.toString() == 'Error') {
+      final canonical = target.coreFileId?.trim() ?? '';
+      if (canonical.isNotEmpty) {
+        return _downloadCanonicalFallback(target, canonical);
+      }
       throw StateError(
         result['message']?.toString() ?? 'Falha ao baixar arquivo.',
       );
@@ -1521,6 +1540,10 @@ class TCloudRepository {
     final completed = local['isDownloadingCompleted'] == true;
 
     if (!completed || path.isEmpty || !await File(path).exists()) {
+      final canonical = target.coreFileId?.trim() ?? '';
+      if (canonical.isNotEmpty) {
+        return _downloadCanonicalFallback(target, canonical);
+      }
       throw StateError('O download nao foi concluido pelo Telegram.');
     }
 
@@ -1532,6 +1555,34 @@ class TCloudRepository {
     );
 
     return path;
+  }
+
+  Future<String> _downloadCanonicalFallback(
+    TCloudFile file,
+    String coreFileId,
+  ) async {
+    final safeId = coreFileId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    final safeName = file.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+    final directory = Directory(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}tcloud_core_media',
+    );
+    final path =
+        '${directory.path}${Platform.pathSeparator}${safeId}_${safeName.isEmpty ? 'arquivo' : safeName}';
+    final downloadedPath = await _canonicalOps.downloadMedia(
+      coreFileId,
+      path,
+      expectedSize: file.size,
+    );
+    final downloaded = file.copyWith(
+      localPath: downloadedPath,
+      downloaded: true,
+    );
+    await rememberOffline(downloaded);
+    _resolvedMediaCache[file.stableIdentity] = _ResolvedMediaCacheEntry(
+      DateTime.now(),
+      downloaded,
+    );
+    return downloadedPath;
   }
 
   Future<void> upload({
