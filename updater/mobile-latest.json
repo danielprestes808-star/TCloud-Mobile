@@ -1,0 +1,8 @@
+{
+  "version": "1.1.13",
+  "versionCode": 94,
+  "apkUrl": "https://github.com/danielprestes808-star/TCloud-Releases/releases/download/mobile-v1.1.13/TCloud-Mobile-1.1.13.apk",
+  "sha256": "27fe212ed321dd1b1066ca3c0a6e34603a822e699403c3ef67b4cc92e357a4ee",
+  "notes": "Nova interface Fluent visivelmente aplicada, paleta grafite e violeta, novo logo, espaçamentos compactos e carrossel de mídias recentes.",
+  "mandatory": false
+}

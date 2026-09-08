@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowSplashScreenBackground">@color/tcloud_splash_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/tcloud_splash_logo</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">@color/tcloud_splash_background</item>
+        <item name="android:navigationBarColor">@color/tcloud_splash_background</item>
+    </style>
+
+    <style name="TCloudLaunchThemeLight" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowSplashScreenBackground">#F6F1E8</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/tcloud_splash_logo</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#F6F1E8</item>
+        <item name="android:navigationBarColor">#F6F1E8</item>
+    </style>
+
+    <style name="TCloudLaunchThemeDark" parent="@android:style/Theme.NoTitleBar">
+        <item name="android:windowSplashScreenBackground">#0E1626</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/tcloud_splash_logo</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#0E1626</item>
+        <item name="android:navigationBarColor">#0E1626</item>
+    </style>
+</resources>

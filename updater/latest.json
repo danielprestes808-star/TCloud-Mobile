@@ -1,0 +1,12 @@
+{
+    "version":  "1.0.36",
+    "build":  48,
+    "versionCode":  48,
+    "versionName":  "1.0.36",
+    "file":  "tcloud-mobile-latest.apk",
+    "apk":  "tcloud-mobile-latest.apk",
+    "sha256":  "cb4b250b1450b75468cf7c9ee2ad2f6daf2ac6e379a67eb0c173af9e28f145da",
+    "size":  165670700,
+    "notes":  "Filtra registros fantasmas diretamente na leitura ao vivo do Telegram. Itens timestamp_* sem arquivo local valido nem identidade remota real deixam de aparecer. Cache v3 invalidado e substituido por v4 verificado.",
+    "generatedAt":  "2026-08-26T08:13:20.7797669-04:00"
+}

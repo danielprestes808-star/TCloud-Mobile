@@ -1,0 +1,129 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:shared_preferences/shared_preferences.dart';
+
+class TCloudDeviceAuth {
+  TCloudDeviceAuth._();
+
+  static final instance = TCloudDeviceAuth._();
+  static const coreBaseUrl = String.fromEnvironment(
+    'TCLOUD_CORE_URL',
+    defaultValue: 'https://tcloud-core.onrender.com',
+  );
+  static const _tokenKey = 'tcloud_core_device_token_v1';
+  static const _deviceIdKey = 'tcloud_core_device_id_v1';
+
+  Future<String?> deviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_deviceIdKey)?.trim();
+  }
+
+  Future<String?> token() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_tokenKey)?.trim();
+  }
+
+  Future<bool> get paired async => (await token())?.isNotEmpty == true;
+
+  /// Confirma a sessão no Core sem desconectar o aparelho por uma simples
+  /// indisponibilidade de rede. Credenciais rejeitadas são removidas.
+  Future<bool> validate() async {
+    final value = await token();
+    final currentDeviceId = await deviceId();
+    if (value?.isNotEmpty != true || currentDeviceId?.isNotEmpty != true) {
+      return false;
+    }
+
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
+    try {
+      final request = await client.getUrl(
+        Uri.parse('$coreBaseUrl/api/v1/devices'),
+      );
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $value');
+      final response = await request.close().timeout(
+        const Duration(seconds: 6),
+      );
+      if (response.statusCode == HttpStatus.unauthorized ||
+          response.statusCode == HttpStatus.forbidden) {
+        await disconnect();
+        return false;
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return true;
+      }
+      final body = await utf8.decoder.bind(response).join();
+      final decoded = body.isEmpty ? const <dynamic>[] : jsonDecode(body);
+      if (decoded is! List) return true;
+      final found = decoded.whereType<Map>().any(
+        (device) => device['id']?.toString() == currentDeviceId,
+      );
+      if (!found) await disconnect();
+      return found;
+    } on SocketException {
+      return true;
+    } on TimeoutException {
+      return true;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> authorize(HttpClientRequest request) async {
+    final value = await token();
+    if (value?.isNotEmpty == true) {
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $value');
+    }
+  }
+
+  Future<void> pair(String rawCode) async {
+    final code = rawCode.trim().replaceAll('-', '').toUpperCase();
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+    try {
+      final request = await client.postUrl(
+        Uri.parse('$coreBaseUrl/api/v1/device-auth/exchange'),
+      );
+      request.headers.contentType = ContentType.json;
+      request.write(
+        jsonEncode({
+          'code': code,
+          'deviceName': Platform.localHostname.isEmpty
+              ? 'TCloud Mobile'
+              : Platform.localHostname,
+          'platform': 'android',
+          'appVersion': '1.1.13',
+        }),
+      );
+      final response = await request.close().timeout(
+        const Duration(seconds: 12),
+      );
+      final body = await utf8.decoder.bind(response).join();
+      final decoded = body.isEmpty ? <String, dynamic>{} : jsonDecode(body);
+      final data = decoded is Map
+          ? decoded.cast<String, dynamic>()
+          : <String, dynamic>{};
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError(
+          data['message']?.toString() ?? 'Código inválido ou expirado.',
+        );
+      }
+      final token = data['token']?.toString().trim() ?? '';
+      final deviceId = data['deviceId']?.toString().trim() ?? '';
+      if (token.isEmpty || deviceId.isEmpty) {
+        throw StateError('Resposta de pareamento inválida.');
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_tokenKey, token);
+      await prefs.setString(_deviceIdKey, deviceId);
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> disconnect() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_tokenKey);
+    await prefs.remove(_deviceIdKey);
+  }
+}
