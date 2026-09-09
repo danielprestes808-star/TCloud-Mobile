@@ -89,6 +89,12 @@ class TdlibService {
     await _methods.invokeMethod<bool>('logout');
   }
 
+  Future<void> switchAccount(String accountId) async {
+    await _methods.invokeMethod<bool>('switchAccount', <String, dynamic>{
+      'accountId': accountId,
+    });
+  }
+
   Future<List<String>> pickFiles() async {
     final raw = await _methods.invokeMethod<List<dynamic>>('pickFiles');
 
@@ -362,6 +368,25 @@ class TdlibService {
       throw StateError('Nao foi possivel preparar o streaming do video.');
     }
 
+    return url;
+  }
+
+  Future<String> prepareCastStream({
+    required int fileId,
+    required int size,
+    String? mimeType,
+  }) async {
+    final url = await _methods.invokeMethod<String>(
+      'prepareCastStream',
+      <String, dynamic>{
+        'fileId': fileId,
+        'size': size,
+        'mimeType': mimeType ?? 'video/mp4',
+      },
+    );
+    if (url == null || url.isEmpty) {
+      throw StateError('Nao foi possivel preparar a transmissao.');
+    }
     return url;
   }
 

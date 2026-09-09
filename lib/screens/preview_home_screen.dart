@@ -15,6 +15,7 @@ import '../models/tcloud_folder.dart';
 import '../models/tcloud_transfer.dart';
 import '../services/gallery_sync_service.dart';
 import '../services/tcloud_repository.dart';
+import '../services/account_service.dart';
 import '../services/transfer_center.dart';
 import '../services/thumbnail_cache_service.dart';
 import '../telegram/tdlib_service.dart';
@@ -2905,6 +2906,8 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         _libraryPrefs.secureScreen(),
         TdlibService.instance.backgroundBackupStatus(),
         TCloudDeviceAuth.instance.paired,
+        AccountService.instance.accounts(),
+        AccountService.instance.activeId(),
       ]),
       builder: (context, snapshot) {
         final v =
@@ -2920,6 +2923,10 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         final batteryUnrestricted =
             backgroundStatus['batteryUnrestricted'] == true;
         final corePaired = v.length > 6 && v[6] == true;
+        final accounts = v.length > 7 && v[7] is List<TCloudAccount>
+            ? v[7] as List<TCloudAccount>
+            : const <TCloudAccount>[];
+        final activeAccount = v.length > 8 ? v[8]?.toString() : 'default';
         return ListView(
           padding: const EdgeInsets.only(top: 8, bottom: 120),
           children: [
@@ -3093,6 +3100,56 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               ),
             ]),
             section('CONTA E DISPOSITIVOS', [
+              ...accounts.map(
+                (account) => ListTile(
+                  leading: Icon(
+                    account.id == activeAccount
+                        ? Icons.account_circle
+                        : Icons.account_circle_outlined,
+                  ),
+                  title: Text(account.label),
+                  subtitle: Text(
+                    account.id == activeAccount
+                        ? 'Conta ativa'
+                        : 'Trocar conta',
+                  ),
+                  trailing: account.id == activeAccount
+                      ? const Icon(Icons.check_rounded)
+                      : const Icon(Icons.chevron_right_rounded),
+                  onTap: account.id == activeAccount
+                      ? null
+                      : () async {
+                          await AccountService.instance.setActive(account.id);
+                          await TdlibService.instance.switchAccount(account.id);
+                          if (!context.mounted) return;
+                          Navigator.of(context).pushAndRemoveUntil(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const LoginScreen(),
+                            ),
+                            (_) => false,
+                          );
+                        },
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.person_add_alt_1_outlined),
+                title: const Text('Adicionar outra conta'),
+                subtitle: const Text(
+                  'Mantem os arquivos e a sessao separados.',
+                ),
+                onTap: () async {
+                  final id = await AccountService.instance.createAccount();
+                  await TdlibService.instance.switchAccount(id);
+                  if (!context.mounted) return;
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const LoginScreen(),
+                    ),
+                    (_) => false,
+                  );
+                },
+              ),
+              const Divider(height: 1),
               ListTile(
                 leading: Icon(
                   corePaired

@@ -11,6 +11,8 @@ import '../services/tcloud_repository.dart';
 import '../services/thumbnail_cache_service.dart';
 import '../telegram/tdlib_service.dart';
 import '../services/media_cache_policy.dart';
+import '../services/cast_service.dart';
+import 'package:flutter_chrome_cast/flutter_chrome_cast.dart';
 
 class MediaViewerScreen extends StatefulWidget {
   const MediaViewerScreen({super.key, required this.file, this.files});
@@ -486,6 +488,63 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
     }
   }
 
+  Future<void> _cast() async {
+    if (!_file.isVideo && !_file.isImage) {
+      _message('A transmissao esta disponivel para fotos e videos.');
+      return;
+    }
+    try {
+      await CastService.instance.startDiscovery();
+      if (!mounted) return;
+      final device = await showModalBottomSheet<GoogleCastDevice>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+          child: StreamBuilder<List<GoogleCastDevice>>(
+            stream: CastService.instance.devices,
+            builder: (context, snapshot) {
+              final devices = snapshot.data ?? const <GoogleCastDevice>[];
+              return SizedBox(
+                height: 320,
+                child: devices.isEmpty
+                    ? const Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 16),
+                            Text('Procurando TVs na mesma rede Wi-Fi...'),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: devices.length,
+                        itemBuilder: (_, index) => ListTile(
+                          leading: const Icon(Icons.cast),
+                          title: Text(devices[index].friendlyName),
+                          subtitle: Text(
+                            devices[index].modelName ?? 'Google Cast',
+                          ),
+                          onTap: () =>
+                              Navigator.pop(sheetContext, devices[index]),
+                        ),
+                      ),
+              );
+            },
+          ),
+        ),
+      );
+      if (device == null || !mounted) return;
+      setState(() => _actionBusy = true);
+      await CastService.instance.cast(_file, device);
+      if (mounted) _message('Transmitindo em ${device.friendlyName}.');
+    } catch (error) {
+      if (mounted) _message('Nao foi possivel transmitir: $error');
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
   Future<void> _offline() async {
     if (_actionBusy) return;
     setState(() => _actionBusy = true);
@@ -931,6 +990,12 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
                     '${_index + 1}/${_items.length}',
                     style: const TextStyle(color: Colors.white70),
                   ),
+                  if (_file.isVideo || _file.isImage)
+                    IconButton(
+                      tooltip: 'Transmitir para TV',
+                      onPressed: _actionBusy ? null : _cast,
+                      icon: const Icon(Icons.cast, color: Colors.white),
+                    ),
                   IconButton(
                     onPressed: _actionBusy ? null : _share,
                     icon: const Icon(Icons.share_outlined, color: Colors.white),

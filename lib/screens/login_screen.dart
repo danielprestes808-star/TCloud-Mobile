@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../core/tcloud_theme.dart';
 import '../telegram/tdlib_service.dart';
 import '../telegram/telegram_config.dart';
+import '../services/account_service.dart';
 import 'preview_home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -287,6 +288,7 @@ class _LoginScreenState extends State<LoginScreen> {
           }
 
           await _tdlib.submitPhone(phone);
+          await AccountService.instance.rememberPhone(phone);
           break;
 
         case TdlibAuthorizationStage.code:

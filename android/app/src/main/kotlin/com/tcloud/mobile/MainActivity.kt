@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.net.Socket
 import java.net.ServerSocket
 import java.net.InetAddress
+import java.net.NetworkInterface
 import java.io.RandomAccessFile
 import java.security.MessageDigest
 import android.provider.Settings
@@ -166,6 +167,9 @@ class MainActivity : FlutterActivity() {
         set(value) {
             TCloudTdlibRuntime.state = value
         }
+
+    @Volatile
+    private var pendingAccountSwitch = false
 
     private var pendingFilePickerResult:
         MethodChannel.Result? = null
@@ -639,6 +643,29 @@ else -> result.notImplemented()
                     result.success(true)
                 }
 
+                "switchAccount" -> {
+                    val accountId = call.argument<String>("accountId")
+                        ?.replace(Regex("[^A-Za-z0-9_-]"), "_")
+                        ?.take(64)
+                        .orEmpty()
+                    if (accountId.isBlank()) {
+                        result.error("ACCOUNT", "Conta invalida.", null)
+                    } else {
+                        getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+                            .edit()
+                            .putString("flutter.tcloud_active_account_v1", accountId)
+                            .apply()
+                        val current = tdClient
+                        if (current == null) {
+                            initializeTdlib()
+                        } else {
+                            pendingAccountSwitch = true
+                            current.send(TdApi.Close()) { }
+                        }
+                        result.success(true)
+                    }
+                }
+
                 "getState" -> {
                     result.success(
                         currentState
@@ -851,6 +878,20 @@ else -> result.notImplemented()
 
                 "getBackgroundBackupRecords" -> {
                     result.success(TCloudTdlibRuntime.backgroundBackupRecords(this))
+                }
+
+                "prepareCastStream" -> {
+                    val fileId = call.argument<Number>("fileId")?.toInt() ?: 0
+                    val size = call.argument<Number>("size")?.toLong() ?: 0L
+                    val mimeType = call.argument<String>("mimeType").orEmpty()
+                    try {
+                        result.success(
+                            prepareTCloudVideoStream(fileId, size, mimeType)
+                                .replace("127.0.0.1", tcloudLanAddress())
+                        )
+                    } catch (error: Throwable) {
+                        result.error("CAST_STREAM", error.message ?: error.toString(), null)
+                    }
                 }
 
                 "shareFiles" -> {
@@ -1534,7 +1575,7 @@ else -> result.notImplemented()
                 0,
                 16,
                 InetAddress.getByName(
-                    "127.0.0.1"
+                    "0.0.0.0"
                 )
             )
 
@@ -2323,6 +2364,21 @@ else -> result.notImplemented()
                 "Compartilhar arquivo"
             )
         )
+    }
+
+    private fun tcloudLanAddress(): String {
+        val interfaces = NetworkInterface.getNetworkInterfaces()
+        while (interfaces.hasMoreElements()) {
+            val network = interfaces.nextElement()
+            if (!network.isUp || network.isLoopback) continue
+            val addresses = network.inetAddresses
+            while (addresses.hasMoreElements()) {
+                val address = addresses.nextElement()
+                val value = address.hostAddress ?: continue
+                if (!address.isLoopbackAddress && value.indexOf(':') < 0) return value
+            }
+        }
+        throw IllegalStateException("Conecte o celular e o dispositivo Cast na mesma rede Wi-Fi.")
     }
 
     private fun shareLocalFiles(
@@ -3521,16 +3577,24 @@ private fun listGalleryMedia(
                     currentState
                 )
 
+                val accountId = getSharedPreferences(
+                    "FlutterSharedPreferences",
+                    MODE_PRIVATE
+                ).getString("flutter.tcloud_active_account_v1", "default")
+                    ?.replace(Regex("[^A-Za-z0-9_-]"), "_")
+                    ?.take(64)
+                    ?: "default"
+
                 val databaseDir =
                     File(
                         filesDir,
-                        "tdlib/database"
+                        "tdlib/$accountId/database"
                     )
 
                 val tdFilesDir =
                     File(
                         filesDir,
-                        "tdlib/files"
+                        "tdlib/$accountId/files"
                     )
 
                 databaseDir.mkdirs()
@@ -3655,6 +3719,10 @@ private fun listGalleryMedia(
                     "closed"
                 emitState(currentState)
                 tdClient = null
+                if (pendingAccountSwitch) {
+                    pendingAccountSwitch = false
+                    Handler(Looper.getMainLooper()).post { initializeTdlib() }
+                }
             }
 
             else -> {
