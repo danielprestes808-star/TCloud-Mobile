@@ -6,10 +6,13 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.database.ContentObserver
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.work.BackoffPolicy
@@ -22,6 +25,10 @@ import java.util.concurrent.TimeUnit
 
 class TCloudBackupService : Service() {
     private val handler = Handler(Looper.getMainLooper())
+    private var mediaObserver: ContentObserver? = null
+    private val enqueueRealtime = Runnable {
+        enqueueBackup(applicationContext, realtime = true)
+    }
     private val maintenance = object : Runnable {
         override fun run() {
             if (!isEnabled(applicationContext)) {
@@ -37,6 +44,7 @@ class TCloudBackupService : Service() {
         super.onCreate()
         ensureChannel()
         startForeground(NOTIFICATION_ID, notification())
+        registerMediaObserver()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -51,6 +59,14 @@ class TCloudBackupService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(maintenance)
+        handler.removeCallbacks(enqueueRealtime)
+        mediaObserver?.let {
+            try {
+                contentResolver.unregisterContentObserver(it)
+            } catch (_: Throwable) {
+            }
+        }
+        mediaObserver = null
         super.onDestroy()
     }
 
@@ -62,6 +78,42 @@ class TCloudBackupService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun registerMediaObserver() {
+        if (mediaObserver != null) return
+
+        val observer = object : ContentObserver(handler) {
+            override fun onChange(selfChange: Boolean) {
+                scheduleRealtimeScan()
+            }
+
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                scheduleRealtimeScan()
+            }
+        }
+
+        try {
+            // A colecao Files recebe eventos de imagens, videos, downloads,
+            // documentos e audio publicados no MediaStore. O worker filtra o
+            // que pertence ao backup habilitado e elimina duplicatas por URI.
+            contentResolver.registerContentObserver(
+                MediaStore.Files.getContentUri("external"),
+                true,
+                observer
+            )
+            mediaObserver = observer
+        } catch (_: Throwable) {
+            // A reconciliacao periodica abaixo permanece como fallback.
+        }
+    }
+
+    private fun scheduleRealtimeScan() {
+        if (!isEnabled(applicationContext)) return
+        // Uma captura costuma gerar varios eventos (arquivo, miniatura e
+        // metadados). Reiniciar este atraso agrupa o lote sem perder o evento.
+        handler.removeCallbacks(enqueueRealtime)
+        handler.postDelayed(enqueueRealtime, REALTIME_DEBOUNCE_MS)
+    }
 
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -104,7 +156,9 @@ class TCloudBackupService : Service() {
         private const val CHANNEL_ID = "tcloud_backup_service"
         private const val NOTIFICATION_ID = 4093
         private const val SERVICE_WORK = "tcloud-gallery-service-cycle"
+        private const val REALTIME_WORK = "tcloud-gallery-realtime-service"
         private const val MAINTENANCE_INTERVAL_MS = 45_000L
+        private const val REALTIME_DEBOUNCE_MS = 900L
 
         fun isEnabled(context: Context): Boolean =
             context.getSharedPreferences(TCloudGalleryWorker.PREFS, Context.MODE_PRIVATE)
@@ -119,9 +173,10 @@ class TCloudBackupService : Service() {
         fun stop(context: Context) {
             context.stopService(Intent(context, TCloudBackupService::class.java))
             WorkManager.getInstance(context).cancelUniqueWork(SERVICE_WORK)
+            WorkManager.getInstance(context).cancelUniqueWork(REALTIME_WORK)
         }
 
-        fun enqueueBackup(context: Context) {
+        fun enqueueBackup(context: Context, realtime: Boolean = false) {
             if (!isEnabled(context)) return
             val prefs =
                 context.getSharedPreferences(TCloudGalleryWorker.PREFS, Context.MODE_PRIVATE)
@@ -141,8 +196,8 @@ class TCloudBackupService : Service() {
                 .addTag("tcloud_gallery_persistent")
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(
-                SERVICE_WORK,
-                ExistingWorkPolicy.KEEP,
+                if (realtime) REALTIME_WORK else SERVICE_WORK,
+                if (realtime) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP,
                 request
             )
         }
