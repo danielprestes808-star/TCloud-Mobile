@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -824,18 +826,18 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
 
   Future<void> _shareSelectedMedia() async {
     final selected = _selectedMedia;
-    if (selected.length != 1) return;
-
-    final file = selected.first;
+    if (selected.isEmpty) return;
 
     try {
-      var path = file.localPath;
-
-      if (path == null || path.isEmpty || !File(path).existsSync()) {
-        path = await _repo.download(file);
+      final paths = <String>[];
+      for (final file in selected) {
+        var path = file.localPath;
+        if (path == null || path.isEmpty || !File(path).existsSync()) {
+          path = await _repo.download(file);
+        }
+        paths.add(path);
       }
-
-      await TdlibService.instance.shareFile(path, mimeType: file.mimeType);
+      await TdlibService.instance.shareFiles(paths);
     } catch (error) {
       if (!mounted) return;
 
@@ -1139,6 +1141,160 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         ),
       ),
     );
+  }
+
+  String _scannerPath(String value) {
+    final uri = Uri.tryParse(value);
+    if (uri != null && uri.scheme == 'file') return uri.toFilePath();
+    return value;
+  }
+
+  Future<void> _scanDocument() async {
+    final scanner = DocumentScanner(
+      options: DocumentScannerOptions(
+        documentFormats: const {DocumentFormat.jpeg, DocumentFormat.pdf},
+        pageLimit: 25,
+        mode: ScannerMode.full,
+        isGalleryImport: true,
+      ),
+    );
+
+    try {
+      final result = await scanner.scanDocument();
+      final images = (result.images ?? const <String>[])
+          .map(_scannerPath)
+          .where((path) => path.isNotEmpty)
+          .toList();
+      final pdf = result.pdf == null ? null : _scannerPath(result.pdf!.uri);
+      if (!mounted || (images.isEmpty && (pdf == null || pdf.isEmpty))) return;
+
+      final action = await showModalBottomSheet<String>(
+        context: context,
+        showDragHandle: true,
+        useSafeArea: true,
+        builder: (sheetContext) => Wrap(
+          children: [
+            ListTile(
+              title: Text(
+                '${images.length} pagina(s) digitalizada(s)',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              subtitle: const Text(
+                'Bordas, perspectiva e contraste foram corrigidos.',
+              ),
+            ),
+            if (pdf != null && pdf.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.picture_as_pdf_outlined),
+                title: const Text('Salvar PDF no TCloud'),
+                onTap: () => Navigator.pop(sheetContext, 'pdf'),
+              ),
+            if (images.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Salvar paginas como imagens'),
+                onTap: () => Navigator.pop(sheetContext, 'images'),
+              ),
+            if (images.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.document_scanner_outlined),
+                title: const Text('Extrair texto (OCR)'),
+                subtitle: const Text(
+                  'Reconhece texto em portugues no aparelho.',
+                ),
+                onTap: () => Navigator.pop(sheetContext, 'ocr'),
+              ),
+          ],
+        ),
+      );
+      if (!mounted || action == null) return;
+
+      if (action == 'ocr') {
+        await _recognizeScannedText(images);
+        return;
+      }
+
+      final destination = await _chooseDestination(
+        title: 'Salvar documento em qual pasta?',
+      );
+      if (destination == null || !mounted) return;
+      final paths = action == 'pdf' && pdf != null ? <String>[pdf] : images;
+      await _uploadPaths(paths, destination);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Documento salvo em ${destination.title}.')),
+      );
+    } on PlatformException catch (error) {
+      if (!mounted || error.code == 'CANCELLED') return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Nao foi possivel digitalizar: ${error.message}'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Nao foi possivel digitalizar: $error')),
+      );
+    } finally {
+      await scanner.close();
+    }
+  }
+
+  Future<void> _recognizeScannedText(List<String> images) async {
+    final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
+    try {
+      final parts = <String>[];
+      for (final path in images) {
+        final result = await recognizer.processImage(
+          InputImage.fromFilePath(path),
+        );
+        if (result.text.trim().isNotEmpty) parts.add(result.text.trim());
+      }
+      if (!mounted) return;
+      final text = parts.join('\n\n');
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        useSafeArea: true,
+        builder: (sheetContext) => SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * .78,
+          child: Column(
+            children: [
+              ListTile(
+                title: const Text(
+                  'Texto reconhecido',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text('${text.length} caracteres'),
+                trailing: IconButton(
+                  tooltip: 'Copiar texto',
+                  onPressed: text.isEmpty
+                      ? null
+                      : () async {
+                          await Clipboard.setData(ClipboardData(text: text));
+                          if (sheetContext.mounted) Navigator.pop(sheetContext);
+                        },
+                  icon: const Icon(Icons.copy_all_outlined),
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(18),
+                  child: SelectableText(
+                    text.isEmpty ? 'Nenhum texto foi encontrado.' : text,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      await recognizer.close();
+    }
   }
 
   Future<void> _consumeSharedFiles() async {
@@ -1616,6 +1772,16 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               ),
               ListTile(
                 leading: const CircleAvatar(
+                  child: Icon(Icons.document_scanner_outlined),
+                ),
+                title: const Text('Digitalizar documento'),
+                subtitle: const Text(
+                  'Escaneie paginas, gere PDF e extraia o texto.',
+                ),
+                onTap: () => Navigator.pop(sheetContext, 'scan'),
+              ),
+              ListTile(
+                leading: const CircleAvatar(
                   child: Icon(Icons.create_new_folder_outlined),
                 ),
                 title: const Text(TCloudLabels.newFolder),
@@ -1641,6 +1807,10 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     switch (action) {
       case 'upload':
         await _importFiles();
+        break;
+
+      case 'scan':
+        await _scanDocument();
         break;
 
       case 'folder':
@@ -4151,12 +4321,11 @@ class _MediaSelectionHotbar extends StatelessWidget {
               onPressed: onOffline,
               icon: const Icon(Icons.offline_pin_outlined),
             ),
-            if (count == 1)
-              IconButton(
-                tooltip: 'Compartilhar',
-                onPressed: onShare,
-                icon: const Icon(Icons.share_outlined),
-              ),
+            IconButton(
+              tooltip: 'Compartilhar',
+              onPressed: onShare,
+              icon: const Icon(Icons.share_outlined),
+            ),
             if (count == 1)
               IconButton(
                 tooltip: 'Informacoes',

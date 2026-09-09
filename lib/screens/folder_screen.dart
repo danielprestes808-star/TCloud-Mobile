@@ -572,6 +572,26 @@ class _FolderScreenState extends State<FolderScreen> {
     setState(_selectedFileIds.clear);
   }
 
+  Future<void> _shareSelected() async {
+    final selected = _files
+        .where((file) => _selectedFileIds.contains(file.fileId))
+        .toList();
+    if (selected.isEmpty) return;
+
+    try {
+      final paths = <String>[];
+      for (final file in selected) {
+        paths.add(await _ensureLocal(file));
+      }
+      await TdlibService.instance.shareFiles(paths);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Nao foi possivel compartilhar: $error')),
+      );
+    }
+  }
+
   Future<void> _upload() async {
     final paths = await TdlibService.instance.pickFiles();
     if (paths.isEmpty) return;
@@ -1037,6 +1057,11 @@ class _FolderScreenState extends State<FolderScreen> {
                 tooltip: 'Selecionar tudo',
                 onPressed: _toggleSelectAllVisible,
                 icon: const Icon(Icons.select_all_outlined),
+              ),
+              IconButton(
+                tooltip: 'Compartilhar',
+                onPressed: _shareSelected,
+                icon: const Icon(Icons.share_outlined),
               ),
               IconButton(
                 tooltip: 'Mover',

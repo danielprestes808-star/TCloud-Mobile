@@ -372,6 +372,18 @@ class TdlibService {
     });
   }
 
+  Future<void> shareFiles(List<String> paths, {String? mimeType}) async {
+    if (paths.isEmpty) return;
+    if (paths.length == 1) {
+      await shareFile(paths.first, mimeType: mimeType);
+      return;
+    }
+    await _methods.invokeMethod<bool>('shareFiles', <String, dynamic>{
+      'paths': paths,
+      'mimeType': mimeType ?? '*/*',
+    });
+  }
+
   Future<bool> enterPictureInPicture({int width = 16, int height = 9}) async {
     return await _methods.invokeMethod<bool>(
           'enterPictureInPicture',

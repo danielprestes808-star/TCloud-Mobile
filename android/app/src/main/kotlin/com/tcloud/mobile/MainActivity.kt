@@ -852,6 +852,37 @@ else -> result.notImplemented()
                 "getBackgroundBackupRecords" -> {
                     result.success(TCloudTdlibRuntime.backgroundBackupRecords(this))
                 }
+
+                "shareFiles" -> {
+                    val paths =
+                        call.argument<List<String>>(
+                            "paths"
+                        ).orEmpty()
+
+                    val mimeType =
+                        call.argument<String>(
+                            "mimeType"
+                        )?.trim()
+                            .orEmpty()
+                            .ifBlank { "*/*" }
+
+                    try {
+                        shareLocalFiles(
+                            paths,
+                            mimeType
+                        )
+                        result.success(true)
+                    } catch (
+                        error: Throwable
+                    ) {
+                        result.error(
+                            "SHARE_FILES",
+                            error.message
+                                ?: error.toString(),
+                            null
+                        )
+                    }
+                }
                 "forgetBackgroundBackupUris" -> {
                     val uris = call.argument<List<String>>("uris")
                         ?.filter { it.isNotBlank() }
@@ -2290,6 +2321,68 @@ else -> result.notImplemented()
             Intent.createChooser(
                 intent,
                 "Compartilhar arquivo"
+            )
+        )
+    }
+
+    private fun shareLocalFiles(
+        paths: List<String>,
+        mimeType: String
+    ) {
+        val files =
+            paths
+                .filter { it.isNotBlank() }
+                .map(::File)
+
+        if (files.isEmpty()) {
+            throw IllegalArgumentException(
+                "Nenhum arquivo foi selecionado."
+            )
+        }
+
+        val missing = files.firstOrNull { !it.exists() }
+        if (missing != null) {
+            throw IllegalStateException(
+                "Arquivo local nao encontrado: ${missing.name}"
+            )
+        }
+
+        val uris = ArrayList<Uri>(files.size)
+        files.forEach { file ->
+            uris.add(
+                FileProvider.getUriForFile(
+                    this,
+                    "${applicationContext.packageName}.fileprovider",
+                    file
+                )
+            )
+        }
+
+        val intent =
+            Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = mimeType
+                putParcelableArrayListExtra(
+                    Intent.EXTRA_STREAM,
+                    uris
+                )
+                clipData = android.content.ClipData.newUri(
+                    contentResolver,
+                    files.first().name,
+                    uris.first()
+                ).also { data ->
+                    for (index in 1 until uris.size) {
+                        data.addItem(
+                            android.content.ClipData.Item(uris[index])
+                        )
+                    }
+                }
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+        startActivity(
+            Intent.createChooser(
+                intent,
+                "Compartilhar ${files.size} arquivos"
             )
         )
     }
