@@ -12,6 +12,7 @@ import '../models/tcloud_transfer.dart';
 import '../services/tcloud_repository.dart';
 import '../services/transfer_center.dart';
 import '../services/thumbnail_cache_service.dart';
+import '../services/folder_share_service.dart';
 import '../telegram/tdlib_service.dart';
 import 'media_viewer_screen.dart';
 
@@ -592,6 +593,26 @@ class _FolderScreenState extends State<FolderScreen> {
     }
   }
 
+  Future<void> _shareFolder() async {
+    try {
+      final link = await FolderShareService.instance.create(widget.folder);
+      await Clipboard.setData(ClipboardData(text: link));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Link da pasta copiado. Valido por 7 dias.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Nao foi possivel compartilhar a pasta: $error'),
+        ),
+      );
+    }
+  }
+
   Future<void> _upload() async {
     final paths = await TdlibService.instance.pickFiles();
     if (paths.isEmpty) return;
@@ -1079,6 +1100,11 @@ class _FolderScreenState extends State<FolderScreen> {
                 icon: const Icon(Icons.offline_pin_outlined),
               ),
             ] else ...[
+              IconButton(
+                tooltip: 'Compartilhar pasta',
+                onPressed: _shareFolder,
+                icon: const Icon(Icons.folder_shared_outlined),
+              ),
               PopupMenuButton<_SortMode>(
                 tooltip: 'Ordenar',
                 initialValue: _sortMode,
