@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -143,6 +143,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   }
 
   void _beginMediaDragSelection(TCloudFile file) {
+    unawaited(HapticFeedback.selectionClick());
     _mediaDragActive = true;
     _mediaDragVisited.clear();
 

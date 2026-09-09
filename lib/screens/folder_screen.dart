@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 
 import '../core/tcloud_theme.dart';
@@ -31,9 +31,17 @@ class FolderScreen extends StatefulWidget {
 class _FolderScreenState extends State<FolderScreen> {
   final _repo = TCloudRepository.instance;
   final _scrollController = ScrollController();
+  final Map<String, GlobalKey> _dragTileKeys = <String, GlobalKey>{};
+  final Set<String> _dragVisited = <String>{};
 
   final List<TCloudFile> _files = <TCloudFile>[];
   final Set<int> _selectedFileIds = <int>{};
+
+  Timer? _dragAutoScrollTimer;
+  Offset? _dragLastGlobalPosition;
+  double _dragAutoScrollVelocity = 0;
+  bool _dragActive = false;
+  bool _dragSelectValue = true;
 
   bool _loading = true;
   bool _refreshing = false;
@@ -61,10 +69,110 @@ class _FolderScreenState extends State<FolderScreen> {
 
   @override
   void dispose() {
+    _stopDragAutoScroll();
     _scrollController
       ..removeListener(_handleScroll)
       ..dispose();
     super.dispose();
+  }
+
+  String _dragIdentity(TCloudFile file) =>
+      '${file.chatId}:${file.messageId}:${file.fileId}';
+
+  GlobalKey _dragTileKey(TCloudFile file) =>
+      _dragTileKeys.putIfAbsent(_dragIdentity(file), GlobalKey.new);
+
+  TCloudFile? _fileAtGlobalPosition(Offset globalPosition) {
+    for (final file in _visible) {
+      final tileContext = _dragTileKeys[_dragIdentity(file)]?.currentContext;
+      final renderObject = tileContext?.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.hasSize) continue;
+      final rect = renderObject.localToGlobal(Offset.zero) & renderObject.size;
+      if (rect.contains(globalPosition)) return file;
+    }
+    return null;
+  }
+
+  void _applyDragSelection(TCloudFile file) {
+    if (!_dragVisited.add(_dragIdentity(file))) return;
+    setState(() {
+      if (_dragSelectValue) {
+        _selectedFileIds.add(file.fileId);
+      } else {
+        _selectedFileIds.remove(file.fileId);
+      }
+    });
+  }
+
+  void _beginDragSelection(TCloudFile file) {
+    unawaited(HapticFeedback.selectionClick());
+    _dragActive = true;
+    _dragVisited.clear();
+    _dragSelectValue = !_selectedFileIds.contains(file.fileId);
+    _applyDragSelection(file);
+  }
+
+  void _updateDragSelection(Offset globalPosition) {
+    if (!_dragActive) return;
+    final file = _fileAtGlobalPosition(globalPosition);
+    if (file != null) _applyDragSelection(file);
+  }
+
+  void _stopDragAutoScroll() {
+    _dragAutoScrollTimer?.cancel();
+    _dragAutoScrollTimer = null;
+    _dragAutoScrollVelocity = 0;
+    _dragLastGlobalPosition = null;
+  }
+
+  void _updateDragAutoScroll(Offset globalPosition) {
+    _dragLastGlobalPosition = globalPosition;
+    if (!_dragActive || !_scrollController.hasClients) {
+      _stopDragAutoScroll();
+      return;
+    }
+
+    final viewport = MediaQuery.of(context);
+    const edge = 104.0;
+    final top = viewport.padding.top + kToolbarHeight + edge;
+    final bottom = viewport.size.height - viewport.padding.bottom - edge;
+    double velocity = 0;
+    if (globalPosition.dy < top) {
+      velocity = -8 - 24 * ((top - globalPosition.dy) / edge).clamp(0, 1);
+    } else if (globalPosition.dy > bottom) {
+      velocity = 8 + 24 * ((globalPosition.dy - bottom) / edge).clamp(0, 1);
+    }
+    _dragAutoScrollVelocity = velocity;
+
+    if (velocity == 0) {
+      _dragAutoScrollTimer?.cancel();
+      _dragAutoScrollTimer = null;
+      return;
+    }
+
+    _dragAutoScrollTimer ??= Timer.periodic(const Duration(milliseconds: 16), (
+      _,
+    ) {
+      if (!mounted || !_dragActive || !_scrollController.hasClients) {
+        _stopDragAutoScroll();
+        return;
+      }
+      final position = _scrollController.position;
+      final next = (position.pixels + _dragAutoScrollVelocity)
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble();
+      if ((next - position.pixels).abs() > .25) {
+        _scrollController.jumpTo(next);
+        final finger = _dragLastGlobalPosition;
+        if (finger != null) _updateDragSelection(finger);
+      }
+    });
+  }
+
+  void _endDragSelection() {
+    _stopDragAutoScroll();
+    _dragActive = false;
+    _dragVisited.clear();
   }
 
   void _handleScroll() {
@@ -505,6 +613,19 @@ class _FolderScreenState extends State<FolderScreen> {
 
   void _clearSelection() => setState(_selectedFileIds.clear);
 
+  void _toggleSelectAllVisible() {
+    final visibleIds = _visible.map((file) => file.fileId).toSet();
+    final allSelected =
+        visibleIds.isNotEmpty && visibleIds.every(_selectedFileIds.contains);
+    setState(() {
+      if (allSelected) {
+        _selectedFileIds.removeAll(visibleIds);
+      } else {
+        _selectedFileIds.addAll(visibleIds);
+      }
+    });
+  }
+
   List<TCloudFile> get _visible {
     final query = _query.trim().toLowerCase();
 
@@ -770,7 +891,13 @@ class _FolderScreenState extends State<FolderScreen> {
     return ClipRRect(
       borderRadius: BorderRadius.circular(7),
       child: GestureDetector(
-        onLongPress: () => _toggleSelection(file),
+        onLongPressStart: (_) => _beginDragSelection(file),
+        onLongPressMoveUpdate: (details) {
+          _updateDragAutoScroll(details.globalPosition);
+          _updateDragSelection(details.globalPosition);
+        },
+        onLongPressEnd: (_) => _endDragSelection(),
+        onLongPressCancel: _endDragSelection,
         onTap: () {
           if (_selectionMode) {
             _toggleSelection(file);
@@ -906,6 +1033,11 @@ class _FolderScreenState extends State<FolderScreen> {
                 ),
           actions: [
             if (_selectionMode) ...[
+              IconButton(
+                tooltip: 'Selecionar tudo',
+                onPressed: _toggleSelectAllVisible,
+                icon: const Icon(Icons.select_all_outlined),
+              ),
               IconButton(
                 tooltip: 'Mover',
                 onPressed: _moveSelected,
@@ -1100,7 +1232,11 @@ class _FolderScreenState extends State<FolderScreen> {
                                   );
                                 }
 
-                                return _galleryItem(visible[index]);
+                                final file = visible[index];
+                                return KeyedSubtree(
+                                  key: _dragTileKey(file),
+                                  child: _galleryItem(file),
+                                );
                               },
                             ),
                     ),
