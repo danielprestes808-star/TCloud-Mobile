@@ -54,6 +54,9 @@ abstract final class TCloudBrandTheme {
       navigationBarTheme: base.navigationBarTheme.copyWith(
         backgroundColor: preset.surface,
         indicatorColor: preset.accent.withValues(alpha: .18),
+        indicatorShape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(4),
+        ),
       ),
       inputDecorationTheme: base.inputDecorationTheme.copyWith(
         fillColor: Color.alphaBlend(
@@ -82,6 +85,34 @@ abstract final class TCloudBrandTheme {
       ),
       bottomSheetTheme: base.bottomSheetTheme.copyWith(
         backgroundColor: preset.surface,
+        surfaceTintColor: Colors.transparent,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+        ),
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        elevation: 1,
+        backgroundColor: preset.accent,
+        foregroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+      ),
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: preset.accent,
+        linearTrackColor: border,
+      ),
+      chipTheme: base.chipTheme.copyWith(
+        backgroundColor: preset.surface,
+        selectedColor: preset.accent.withValues(alpha: .18),
+        side: BorderSide(color: border),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: preset.surface,
+        elevation: 3,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+      ),
+      listTileTheme: base.listTileTheme.copyWith(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
       ),
       dividerColor: border,
       textTheme: base.textTheme
