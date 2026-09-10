@@ -34,6 +34,7 @@ import 'integrity_center_screen.dart';
 import '../services/media_cache_policy.dart';
 import '../services/library_preferences_service.dart';
 import '../services/tcloud_device_auth.dart';
+import '../services/biometric_lock_service.dart';
 import '../services/tcloud_foundation5_bridge.dart';
 
 import '../widgets/tcloud_theme_selector.dart';
@@ -3138,6 +3139,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         TCloudDeviceAuth.instance.paired,
         AccountService.instance.accounts(),
         AccountService.instance.activeId(),
+        BiometricLockService.instance.isEnabled(),
       ]),
       builder: (context, snapshot) {
         final v =
@@ -3157,6 +3159,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
             ? v[7] as List<TCloudAccount>
             : const <TCloudAccount>[];
         final activeAccount = v.length > 8 ? v[8]?.toString() : 'default';
+        final biometricEnabled = v.length > 9 && v[9] == true;
         return ListView(
           padding: const EdgeInsets.only(top: 8, bottom: 120),
           children: [
@@ -3330,6 +3333,32 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               ),
             ]),
             section('CONTA E DISPOSITIVOS', [
+              SwitchListTile(
+                secondary: const Icon(Icons.fingerprint_rounded),
+                title: const Text('Desbloquear com biometria'),
+                subtitle: Text(
+                  biometricEnabled
+                      ? 'Proteção ativa ao abrir ou retornar ao aplicativo.'
+                      : 'Use a biometria cadastrada neste telefone.',
+                ),
+                value: biometricEnabled,
+                onChanged: (value) async {
+                  try {
+                    await BiometricLockService.instance.setEnabled(value);
+                    if (mounted) setState(() {});
+                  } catch (failure) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          '$failure'.replaceFirst('Bad state: ', ''),
+                        ),
+                      ),
+                    );
+                  }
+                },
+              ),
+              const Divider(height: 1),
               ListTile(
                 leading: const Icon(Icons.badge_outlined),
                 title: const Text('Perfil TCloud'),

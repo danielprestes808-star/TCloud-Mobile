@@ -5,6 +5,7 @@ import 'screens/login_screen.dart';
 import 'theme/tcloud_brand_theme.dart';
 
 import 'theme/tcloud_theme_controller.dart';
+import 'widgets/biometric_app_lock.dart';
 
 // TCLOUD_ECOSYSTEM_THEME_BOUND_200
 class TCloudApp extends StatelessWidget {
@@ -23,7 +24,7 @@ class TCloudApp extends StatelessWidget {
           title: 'TCloud',
           debugShowCheckedModeBanner: false,
           theme: TCloudBrandTheme.fromPreset(controller.preset),
-          home: const LoginScreen(),
+          home: const BiometricAppLock(child: LoginScreen()),
         );
       },
     );

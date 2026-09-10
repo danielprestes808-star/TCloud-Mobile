@@ -38,7 +38,7 @@ import android.os.PowerManager
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.ExistingWorkPolicy
 import androidx.core.content.FileProvider
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.work.WorkManager
@@ -57,7 +57,7 @@ import java.lang.reflect.Array as ReflectArray
 import java.lang.reflect.Field
 import java.lang.reflect.Modifier
 
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterFragmentActivity() {
     // TCLOUD_REALTIME_BACKGROUND_BACKUP_1050
     private var tcloudMediaObserver: ContentObserver? = null
     private var tcloudRealtimeLastEnqueueMs: Long = 0L
