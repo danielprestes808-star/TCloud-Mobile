@@ -2990,7 +2990,17 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   }
 
   Future<void> _manageDevices() async {
-    var devices = await TCloudDeviceAuth.instance.devices();
+    List<Map<String, dynamic>> devices;
+    try {
+      devices = await TCloudDeviceAuth.instance.devices();
+    } catch (failure) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$failure'.replaceFirst('Bad state: ', ''))),
+        );
+      }
+      return;
+    }
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -3010,33 +3020,69 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 const SizedBox(height: 6),
                 const Text('Revogue aparelhos que você não reconhece.'),
                 const SizedBox(height: 12),
-                ...devices.map(
-                  (device) => ListTile(
-                    leading: Icon(
-                      device['platform'] == 'android'
-                          ? Icons.smartphone
-                          : Icons.computer,
-                    ),
-                    title: Text(device['name']?.toString() ?? 'Dispositivo'),
-                    subtitle: Text(
-                      '${device['active'] == true ? 'Ativo' : 'Sessão encerrada'}${device['current'] == true ? ' · Este aparelho' : ''}',
-                    ),
-                    trailing:
-                        device['active'] == true && device['current'] != true
-                        ? IconButton(
-                            icon: const Icon(Icons.logout),
-                            tooltip: 'Revogar',
-                            onPressed: () async {
-                              await TCloudDeviceAuth.instance.revokeDevice(
-                                device['id'].toString(),
-                              );
-                              devices = await TCloudDeviceAuth.instance
-                                  .devices();
-                              setSheetState(() {});
-                            },
-                          )
-                        : null,
+                SizedBox(
+                  height: (devices.length * 72.0).clamp(
+                    72.0,
+                    MediaQuery.sizeOf(context).height * .55,
                   ),
+                  child: devices.isEmpty
+                      ? const Center(
+                          child: Text('Nenhum dispositivo encontrado.'),
+                        )
+                      : ListView.builder(
+                          itemCount: devices.length,
+                          itemBuilder: (context, index) {
+                            final device = devices[index];
+                            return ListTile(
+                              leading: Icon(
+                                device['platform'] == 'android'
+                                    ? Icons.smartphone
+                                    : Icons.computer,
+                              ),
+                              title: Text(
+                                device['name']?.toString() ?? 'Dispositivo',
+                              ),
+                              subtitle: Text(
+                                '${device['active'] == true ? 'Ativo' : 'Sessão encerrada'}${device['current'] == true ? ' · Este aparelho' : ''}',
+                              ),
+                              trailing:
+                                  device['active'] == true &&
+                                      device['current'] != true
+                                  ? IconButton(
+                                      icon: const Icon(Icons.logout),
+                                      tooltip: 'Revogar',
+                                      onPressed: () async {
+                                        try {
+                                          await TCloudDeviceAuth.instance
+                                              .revokeDevice(
+                                                device['id'].toString(),
+                                              );
+                                          devices = await TCloudDeviceAuth
+                                              .instance
+                                              .devices();
+                                          setSheetState(() {});
+                                        } catch (failure) {
+                                          if (sheetContext.mounted) {
+                                            ScaffoldMessenger.of(
+                                              sheetContext,
+                                            ).showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                  '$failure'.replaceFirst(
+                                                    'Bad state: ',
+                                                    '',
+                                                  ),
+                                                ),
+                                              ),
+                                            );
+                                          }
+                                        }
+                                      },
+                                    )
+                                  : null,
+                            );
+                          },
+                        ),
                 ),
                 const SizedBox(height: 8),
                 FilledButton(
