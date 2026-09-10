@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../core/tcloud_theme.dart';
 import '../design_system/tcloud_design_system.dart';
@@ -2869,25 +2871,184 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
 
   Future<void> _editTCloudProfile() async {
     final current = await AccountService.instance.activeAccount();
+    final remote = await TCloudDeviceAuth.instance.profile();
     if (!mounted) return;
-    final name = TextEditingController(text: current.displayName ?? '');
-    final username = TextEditingController(text: current.username ?? '');
+    final name = TextEditingController(
+      text: remote?['displayName']?.toString() ?? current.displayName ?? '',
+    );
+    final username = TextEditingController(
+      text: remote?['username']?.toString() ?? current.username ?? '',
+    );
+    String? avatarDataUrl = remote?['avatarUrl']?.toString();
     String? error;
-    await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(
-      builder: (context, setDialogState) => AlertDialog(
-        title: const Text('Perfil TCloud'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: name, textCapitalization: TextCapitalization.words, decoration: const InputDecoration(labelText: 'Seu nome', prefixIcon: Icon(Icons.person_outline))),
-          const SizedBox(height: 12),
-          TextField(controller: username, autocorrect: false, inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_]')), LengthLimitingTextInputFormatter(32)], decoration: InputDecoration(labelText: 'Nome de usuário', prefixText: '@', prefixIcon: const Icon(Icons.alternate_email), errorText: error)),
-        ]),
-        actions: [TextButton(onPressed: ()=>Navigator.pop(dialogContext), child: const Text('Cancelar')), FilledButton(onPressed: () async {
-          try { final profile=await AccountService.instance.saveProfile(name.text, username.text); await TCloudDeviceAuth.instance.register(displayName: profile.displayName!, username: profile.username!); if (dialogContext.mounted) Navigator.pop(dialogContext); if (mounted) setState(() {}); }
-          catch (failure) { setDialogState(()=>error='$failure'.replaceFirst('Bad state: ','')); }
-        }, child: const Text('Salvar'))],
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Perfil TCloud'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircleAvatar(
+                radius: 38,
+                backgroundImage:
+                    avatarDataUrl?.startsWith('data:image/') == true
+                    ? MemoryImage(base64Decode(avatarDataUrl!.split(',').last))
+                    : null,
+                child: avatarDataUrl?.startsWith('data:image/') == true
+                    ? null
+                    : const Icon(Icons.person_outline, size: 34),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  final image = await ImagePicker().pickImage(
+                    source: ImageSource.gallery,
+                    maxWidth: 720,
+                    maxHeight: 720,
+                    imageQuality: 78,
+                  );
+                  if (image == null) return;
+                  final bytes = await image.readAsBytes();
+                  if (bytes.length > 500000) {
+                    setDialogState(
+                      () => error = 'Escolha uma imagem com até 500 KB.',
+                    );
+                    return;
+                  }
+                  final extension = image.name.toLowerCase();
+                  final mime = extension.endsWith('.png')
+                      ? 'image/png'
+                      : extension.endsWith('.webp')
+                      ? 'image/webp'
+                      : 'image/jpeg';
+                  setDialogState(() {
+                    avatarDataUrl = 'data:$mime;base64,${base64Encode(bytes)}';
+                    error = null;
+                  });
+                },
+                icon: const Icon(Icons.photo_camera_outlined),
+                label: const Text('Alterar foto'),
+              ),
+              TextField(
+                controller: name,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Seu nome',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: username,
+                autocorrect: false,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_]')),
+                  LengthLimitingTextInputFormatter(32),
+                ],
+                decoration: InputDecoration(
+                  labelText: 'Nome de usuário',
+                  prefixText: '@',
+                  prefixIcon: const Icon(Icons.alternate_email),
+                  errorText: error,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                try {
+                  final profile = await AccountService.instance.saveProfile(
+                    name.text,
+                    username.text,
+                  );
+                  await TCloudDeviceAuth.instance.register(
+                    displayName: profile.displayName!,
+                    username: profile.username!,
+                    avatarDataUrl: avatarDataUrl,
+                  );
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  if (mounted) setState(() {});
+                } catch (failure) {
+                  setDialogState(
+                    () => error = '$failure'.replaceFirst('Bad state: ', ''),
+                  );
+                }
+              },
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
       ),
-    ));
-    name.dispose(); username.dispose();
+    );
+    name.dispose();
+    username.dispose();
+  }
+
+  Future<void> _manageDevices() async {
+    var devices = await TCloudDeviceAuth.instance.devices();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Dispositivos e acessos',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 6),
+                const Text('Revogue aparelhos que você não reconhece.'),
+                const SizedBox(height: 12),
+                ...devices.map(
+                  (device) => ListTile(
+                    leading: Icon(
+                      device['platform'] == 'android'
+                          ? Icons.smartphone
+                          : Icons.computer,
+                    ),
+                    title: Text(device['name']?.toString() ?? 'Dispositivo'),
+                    subtitle: Text(
+                      '${device['active'] == true ? 'Ativo' : 'Sessão encerrada'}${device['current'] == true ? ' · Este aparelho' : ''}',
+                    ),
+                    trailing:
+                        device['active'] == true && device['current'] != true
+                        ? IconButton(
+                            icon: const Icon(Icons.logout),
+                            tooltip: 'Revogar',
+                            onPressed: () async {
+                              await TCloudDeviceAuth.instance.revokeDevice(
+                                device['id'].toString(),
+                              );
+                              devices = await TCloudDeviceAuth.instance
+                                  .devices();
+                              setSheetState(() {});
+                            },
+                          )
+                        : null,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                FilledButton(
+                  onPressed: () => Navigator.pop(sheetContext),
+                  child: const Text('Concluir'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _settingsPage() {
@@ -3126,9 +3287,19 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               ListTile(
                 leading: const Icon(Icons.badge_outlined),
                 title: const Text('Perfil TCloud'),
-                subtitle: const Text('Nome, usuário e identidade nos compartilhamentos.'),
+                subtitle: const Text(
+                  'Nome, usuário e identidade nos compartilhamentos.',
+                ),
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: _editTCloudProfile,
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.devices_outlined),
+                title: const Text('Dispositivos e acessos'),
+                subtitle: const Text('Veja atividades e revogue aparelhos.'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: corePaired ? _manageDevices : _showDevicePairing,
               ),
               const Divider(height: 1),
               ...accounts.map(
