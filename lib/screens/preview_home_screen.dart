@@ -2867,6 +2867,29 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     controller.dispose();
   }
 
+  Future<void> _editTCloudProfile() async {
+    final current = await AccountService.instance.activeAccount();
+    if (!mounted) return;
+    final name = TextEditingController(text: current.displayName ?? '');
+    final username = TextEditingController(text: current.username ?? '');
+    String? error;
+    await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setDialogState) => AlertDialog(
+        title: const Text('Perfil TCloud'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: name, textCapitalization: TextCapitalization.words, decoration: const InputDecoration(labelText: 'Seu nome', prefixIcon: Icon(Icons.person_outline))),
+          const SizedBox(height: 12),
+          TextField(controller: username, autocorrect: false, inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_]')), LengthLimitingTextInputFormatter(32)], decoration: InputDecoration(labelText: 'Nome de usuário', prefixText: '@', prefixIcon: const Icon(Icons.alternate_email), errorText: error)),
+        ]),
+        actions: [TextButton(onPressed: ()=>Navigator.pop(dialogContext), child: const Text('Cancelar')), FilledButton(onPressed: () async {
+          try { final profile=await AccountService.instance.saveProfile(name.text, username.text); await TCloudDeviceAuth.instance.register(displayName: profile.displayName!, username: profile.username!); if (dialogContext.mounted) Navigator.pop(dialogContext); if (mounted) setState(() {}); }
+          catch (failure) { setDialogState(()=>error='$failure'.replaceFirst('Bad state: ','')); }
+        }, child: const Text('Salvar'))],
+      ),
+    ));
+    name.dispose(); username.dispose();
+  }
+
   Widget _settingsPage() {
     Widget section(String title, List<Widget> children) => Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
@@ -3100,6 +3123,14 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               ),
             ]),
             section('CONTA E DISPOSITIVOS', [
+              ListTile(
+                leading: const Icon(Icons.badge_outlined),
+                title: const Text('Perfil TCloud'),
+                subtitle: const Text('Nome, usuário e identidade nos compartilhamentos.'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: _editTCloudProfile,
+              ),
+              const Divider(height: 1),
               ...accounts.map(
                 (account) => ListTile(
                   leading: Icon(

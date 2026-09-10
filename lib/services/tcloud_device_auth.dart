@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'account_service.dart';
 
 class TCloudDeviceAuth {
   TCloudDeviceAuth._();
@@ -15,14 +16,19 @@ class TCloudDeviceAuth {
   static const _tokenKey = 'tcloud_core_device_token_v1';
   static const _deviceIdKey = 'tcloud_core_device_id_v1';
 
+  Future<String> _key(String base) async {
+    final account = await AccountService.instance.activeId();
+    return account == 'default' ? base : '${base}_$account';
+  }
+
   Future<String?> deviceId() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_deviceIdKey)?.trim();
+    return prefs.getString(await _key(_deviceIdKey))?.trim();
   }
 
   Future<String?> token() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_tokenKey)?.trim();
+    return prefs.getString(await _key(_tokenKey))?.trim();
   }
 
   Future<bool> get paired async => (await token())?.isNotEmpty == true;
@@ -77,6 +83,32 @@ class TCloudDeviceAuth {
     }
   }
 
+  Future<void> register({required String displayName, required String username}) async {
+    final currentToken = await token();
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+    try {
+      final updating = currentToken?.isNotEmpty == true;
+      final request = updating
+          ? await client.patchUrl(Uri.parse('$coreBaseUrl/api/v1/profile'))
+          : await client.postUrl(Uri.parse('$coreBaseUrl/api/v1/onboarding/register'));
+      request.headers.contentType = ContentType.json;
+      if (updating) request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $currentToken');
+      request.write(jsonEncode(updating ? {'displayName': displayName, 'username': username} : {'displayName': displayName, 'username': username, 'deviceName': Platform.localHostname.isEmpty ? 'TCloud Mobile' : Platform.localHostname, 'platform': 'android', 'appVersion': '1.1.22'}));
+      final response = await request.close().timeout(const Duration(seconds: 12));
+      final body = await utf8.decoder.bind(response).join();
+      final decoded = body.isEmpty ? <String, dynamic>{} : jsonDecode(body);
+      final data = decoded is Map ? decoded.cast<String, dynamic>() : <String, dynamic>{};
+      if (response.statusCode < 200 || response.statusCode >= 300 || (!updating && (data['token'] == null || data['deviceId'] == null))) {
+        throw StateError(data['message']?.toString() ?? 'Não foi possível criar sua conta TCloud.');
+      }
+      if (!updating) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(await _key(_tokenKey), data['token'].toString());
+        await prefs.setString(await _key(_deviceIdKey), data['deviceId'].toString());
+      }
+    } finally { client.close(force: true); }
+  }
+
   Future<void> pair(String rawCode) async {
     final code = rawCode.trim().replaceAll('-', '').toUpperCase();
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
@@ -114,8 +146,8 @@ class TCloudDeviceAuth {
         throw StateError('Resposta de pareamento inválida.');
       }
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_tokenKey, token);
-      await prefs.setString(_deviceIdKey, deviceId);
+      await prefs.setString(await _key(_tokenKey), token);
+      await prefs.setString(await _key(_deviceIdKey), deviceId);
     } finally {
       client.close(force: true);
     }
@@ -123,7 +155,7 @@ class TCloudDeviceAuth {
 
   Future<void> disconnect() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_tokenKey);
-    await prefs.remove(_deviceIdKey);
+    await prefs.remove(await _key(_tokenKey));
+    await prefs.remove(await _key(_deviceIdKey));
   }
 }
