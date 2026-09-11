@@ -16,6 +16,20 @@ import java.io.File
 /** Makes locally available TCloud files visible in Android's system file picker. */
 class TCloudDocumentsProvider : DocumentsProvider() {
     private val rootId = "tcloud"
+    private val categories = linkedMapOf(
+        "images" to "Imagens",
+        "videos" to "Vídeos",
+        "audio" to "Áudios",
+        "documents" to "Documentos",
+        "other" to "Outros arquivos",
+    )
+
+    private fun categoryId(key: String) = "category:$key"
+
+    private fun localFiles(): Sequence<File> = roots().asSequence()
+        .flatMap { it.walkTopDown().maxDepth(8) }
+        .filter { it.isFile && visible(it) }
+        .distinctBy { it.canonicalPath }
 
     private fun roots(): List<File> {
         val context = context ?: return emptyList()
@@ -78,6 +92,10 @@ class TCloudDocumentsProvider : DocumentsProvider() {
     override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor {
         val cursor = MatrixCursor(documentColumns(projection))
         if (documentId == rootId) addDocument(cursor, null, rootId, "TCloud")
+        else if (documentId.startsWith("category:")) {
+            val key = documentId.removePrefix("category:")
+            categories[key]?.let { addDocument(cursor, null, documentId, it) }
+        }
         else resolve(documentId)?.let { addDocument(cursor, it, documentId, it.name) }
         return cursor
     }
@@ -85,9 +103,15 @@ class TCloudDocumentsProvider : DocumentsProvider() {
     override fun queryChildDocuments(parentDocumentId: String, projection: Array<out String>?, sortOrder: String?): Cursor {
         val cursor = MatrixCursor(documentColumns(projection))
         if (parentDocumentId == rootId) {
-            roots().forEachIndexed { index, root ->
-                addDocument(cursor, root, id(root), if (index == 0) "Arquivos offline" else "Cache ${index + 1}")
+            categories.forEach { (key, label) ->
+                addDocument(cursor, null, categoryId(key), label)
             }
+        } else if (parentDocumentId.startsWith("category:")) {
+            val key = parentDocumentId.removePrefix("category:")
+            localFiles().filter { categoryFor(it) == key }
+                .sortedByDescending { it.lastModified() }
+                .take(1000)
+                .forEach { addDocument(cursor, it, id(it), it.name) }
         } else {
             resolve(parentDocumentId)?.takeIf { it.isDirectory }?.listFiles()
                 ?.sortedWith(compareByDescending<File> { it.isDirectory }.thenBy { it.name.lowercase() })
@@ -111,10 +135,7 @@ class TCloudDocumentsProvider : DocumentsProvider() {
 
     override fun queryRecentDocuments(rootId: String, projection: Array<out String>?): Cursor {
         val cursor = MatrixCursor(documentColumns(projection))
-        roots().asSequence()
-            .flatMap { it.walkTopDown().maxDepth(8) }
-            .filter { it.isFile && visible(it) }
-            .distinctBy { it.canonicalPath }
+        localFiles()
             .sortedByDescending { it.lastModified() }
             .take(64)
             .forEach { addDocument(cursor, it, id(it), it.name) }
@@ -157,6 +178,32 @@ class TCloudDocumentsProvider : DocumentsProvider() {
     private fun mime(file: File): String {
         return MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
             ?: "application/octet-stream"
+    }
+
+    private fun categoryFor(file: File): String {
+        val type = mime(file)
+        return when {
+            type.startsWith("image/") -> "images"
+            type.startsWith("video/") -> "videos"
+            type.startsWith("audio/") -> "audio"
+            type.startsWith("text/") || type == "application/pdf" ||
+                type.contains("document") || type.contains("sheet") ||
+                type.contains("presentation") || type.contains("zip") -> "documents"
+            else -> "other"
+        }
+    }
+
+    override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
+        if (parentDocumentId == rootId) {
+            return documentId.startsWith("category:") || resolve(documentId) != null
+        }
+        if (parentDocumentId.startsWith("category:")) {
+            val file = resolve(documentId) ?: return false
+            return categoryFor(file) == parentDocumentId.removePrefix("category:")
+        }
+        val parent = resolve(parentDocumentId) ?: return false
+        val child = resolve(documentId) ?: return false
+        return child.path.startsWith(parent.path + File.separator)
     }
 
     private fun addDocument(cursor: MatrixCursor, file: File?, documentId: String, name: String) {
