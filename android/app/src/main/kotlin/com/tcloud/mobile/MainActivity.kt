@@ -452,6 +452,21 @@ else -> result.notImplemented()
                     result.success(true)
                 }
 
+                "setDocumentProviderEnabled" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: true
+                    val component = android.content.ComponentName(
+                        this,
+                        TCloudDocumentsProvider::class.java
+                    )
+                    packageManager.setComponentEnabledSetting(
+                        component,
+                        if (enabled) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                        else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                        android.content.pm.PackageManager.DONT_KILL_APP
+                    )
+                    result.success(true)
+                }
+
                 "enterPictureInPicture" -> {
                     try {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

@@ -2270,6 +2270,14 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 title: const Text('Abrir pasta'),
                 onTap: () => Navigator.pop(sheetContext, 'open'),
               ),
+              ListTile(
+                leading: const Icon(Icons.download_for_offline_outlined),
+                title: const Text('Disponibilizar pasta offline'),
+                subtitle: const Text(
+                  'Baixa os arquivos desta pasta e preserva o progresso.',
+                ),
+                onTap: () => Navigator.pop(sheetContext, 'offline'),
+              ),
               if (!folder.isGeneral) ...[
                 if (galleryChild)
                   ListTile(
@@ -2324,6 +2332,9 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
       case 'rename':
         await _renameAlbum(folder);
         break;
+      case 'offline':
+        await _makeFolderOffline(folder);
+        break;
       case 'visibility':
         await _libraryPrefs.setAlbumHidden(folder, !hiddenFromBackup);
         if (!mounted) return;
@@ -2340,6 +2351,127 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
       case 'delete':
         await _deleteAlbum(folder);
         break;
+    }
+  }
+
+  Future<void> _makeFolderOffline(TCloudFolder folder) async {
+    final progress = ValueNotifier<(int, int, String)>((0, 0, 'Preparando...'));
+    var cancelled = false;
+
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: const Text('Pasta offline'),
+            content: ValueListenableBuilder<(int, int, String)>(
+              valueListenable: progress,
+              builder: (_, value, _) => Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  LinearProgressIndicator(
+                    value: value.$2 > 0 ? value.$1 / value.$2 : null,
+                  ),
+                  const SizedBox(height: 14),
+                  Text(value.$3),
+                  if (value.$2 > 0)
+                    Text(
+                      '${value.$1} de ${value.$2}',
+                      style: TextStyle(color: TCloudTheme.textSecondary),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  cancelled = true;
+                  Navigator.pop(dialogContext);
+                },
+                child: const Text('Pausar'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    var fromMessageId = 0;
+    var fromMessageIds = <String, int>{};
+    final files = <String, TCloudFile>{};
+    try {
+      for (var pageIndex = 0; pageIndex < 100 && !cancelled; pageIndex++) {
+        progress.value = (0, 0, 'Localizando arquivos...');
+        final page = await _repo.loadFilePage(
+          folder,
+          fromMessageId: fromMessageId,
+          fromMessageIds: fromMessageIds,
+          limit: 100,
+        );
+        for (final file in page.files) {
+          files[file.contentIdentity] = file;
+        }
+        if (!page.hasMore) break;
+        fromMessageId = page.nextFromMessageId;
+        fromMessageIds = page.nextFromMessageIds;
+      }
+
+      final existing = _offline.map((file) => file.contentIdentity).toSet();
+      final pending = files.values
+          .where((file) => !existing.contains(file.contentIdentity))
+          .toList();
+      var completed = 0;
+      var failed = 0;
+      for (var start = 0; start < pending.length && !cancelled; start += 2) {
+        final batch = pending.skip(start).take(2).toList();
+        progress.value = (
+          completed,
+          pending.length,
+          'Baixando ${batch.first.name}',
+        );
+        await Future.wait(
+          batch.map((file) async {
+            try {
+              final path = await _repo.download(file);
+              await _repo.rememberOffline(
+                file.copyWith(localPath: path, downloaded: true),
+              );
+            } catch (_) {
+              failed++;
+            } finally {
+              completed++;
+              progress.value = (
+                completed,
+                pending.length,
+                'Salvando para uso offline...',
+              );
+            }
+          }),
+        );
+      }
+      await _loadOffline();
+      if (!mounted || cancelled) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            failed == 0
+                ? '${folder.title} está disponível offline.'
+                : '$completed concluído(s), $failed com falha. Tente novamente para retomar.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted || cancelled) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Não foi possível baixar a pasta: $error')),
+      );
+    } finally {
+      progress.dispose();
     }
   }
 
@@ -3505,6 +3637,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         AccountService.instance.activeId(),
         BiometricLockService.instance.isEnabled(),
         BiometricLockService.instance.timeoutSeconds(),
+        _libraryPrefs.documentProviderEnabled(),
       ]),
       builder: (context, snapshot) {
         final v =
@@ -3535,6 +3668,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
           300 => 'Após 5 minutos',
           _ => 'Após 8 segundos',
         };
+        final documentProviderEnabled = v.length > 11 && v[11] == true;
         return ListView(
           padding: const EdgeInsets.only(top: 8, bottom: 120),
           children: [
@@ -3571,7 +3705,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                           ),
                           SizedBox(height: 3),
                           Text(
-                            'Android • versão 1.1.32',
+                            'Android • versão 1.1.33',
                             style: TextStyle(color: TCloudTheme.textSecondary),
                           ),
                         ],
@@ -3849,6 +3983,19 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 value: secureScreen,
                 onChanged: (value) async {
                   await _libraryPrefs.setSecureScreen(value);
+                  if (mounted) setState(() {});
+                },
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                secondary: const Icon(Icons.drive_file_move_outline),
+                title: const Text('Usar arquivos em outros aplicativos'),
+                subtitle: const Text(
+                  'Mostra o TCloud no seletor de arquivos do Android. Somente itens já disponíveis neste aparelho podem ser enviados.',
+                ),
+                value: documentProviderEnabled,
+                onChanged: (value) async {
+                  await _libraryPrefs.setDocumentProviderEnabled(value);
                   if (mounted) setState(() {});
                 },
               ),

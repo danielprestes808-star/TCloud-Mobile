@@ -15,6 +15,7 @@ class LibraryPreferencesService {
   static const _backupPausedKey = 'tcloud_gallery_backup_paused_v1';
   static const _mobileDataKey = 'tcloud_gallery_mobile_data_v1';
   static const _secureScreenKey = 'tcloud_secure_screen_v1';
+  static const _documentProviderKey = 'tcloud_document_provider_v1';
 
   Future<Set<String>> favorites() async {
     final prefs = await SharedPreferences.getInstance();
@@ -113,5 +114,16 @@ class LibraryPreferencesService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_secureScreenKey, value);
     await TdlibService.instance.setSecureScreen(value);
+  }
+
+  Future<bool> documentProviderEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_documentProviderKey) ?? true;
+  }
+
+  Future<void> setDocumentProviderEnabled(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_documentProviderKey, value);
+    await TdlibService.instance.setDocumentProviderEnabled(value);
   }
 }

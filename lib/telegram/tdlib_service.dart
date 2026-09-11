@@ -423,6 +423,13 @@ class TdlibService {
     });
   }
 
+  Future<void> setDocumentProviderEnabled(bool enabled) async {
+    await _methods.invokeMethod<bool>(
+      'setDocumentProviderEnabled',
+      <String, dynamic>{'enabled': enabled},
+    );
+  }
+
   Future<Map<String, dynamic>> execute(
     String function, [
     Map<String, dynamic> fields = const {},
