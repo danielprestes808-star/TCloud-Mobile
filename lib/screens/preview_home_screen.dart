@@ -84,6 +84,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   int _mediaLoadGeneration = 0;
 
   final Set<int> _selectedMediaIds = <int>{};
+  Set<int> _homeVisibleFileIds = <int>{};
 
   bool get _mediaSelectionMode => _selectedMediaIds.isNotEmpty;
 
@@ -515,6 +516,26 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
 
   void _clearMediaSelection() {
     setState(_selectedMediaIds.clear);
+  }
+
+  void _selectAllVisibleHomeFiles() {
+    setState(() => _selectedMediaIds.addAll(_homeVisibleFileIds));
+  }
+
+  Future<void> _favoriteSelectedMedia() async {
+    final selected = _selectedMedia;
+    if (selected.isEmpty) return;
+    for (final file in selected) {
+      if (!_favorites.contains(file.contentIdentity)) {
+        await _libraryPrefs.toggleFavorite(file);
+      }
+    }
+    await _loadFavorites();
+    _clearMediaSelection();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('${selected.length} item(ns) favoritado(s).')),
+    );
   }
 
   List<TCloudFile> get _selectedMedia {
@@ -3288,7 +3309,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                           ),
                           SizedBox(height: 3),
                           Text(
-                            'Android • versão 1.1.27',
+                            'Android • versão 1.1.28',
                             style: TextStyle(color: TCloudTheme.textSecondary),
                           ),
                         ],
@@ -3698,6 +3719,45 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         )
         .take(10)
         .toList();
+    _homeVisibleFileIds = filteredFiles.map((file) => file.fileId).toSet();
+
+    String dateGroup(TCloudFile file) {
+      if (file.createdAt <= 0) return 'Sem data';
+      final date = DateTime.fromMillisecondsSinceEpoch(
+        file.createdAt * 1000,
+      ).toLocal();
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final day = DateTime(date.year, date.month, date.day);
+      final difference = today.difference(day).inDays;
+      if (difference == 0) return 'Hoje';
+      if (difference == 1) return 'Ontem';
+      if (difference < 7) return 'Esta semana';
+      const months = [
+        'janeiro',
+        'fevereiro',
+        'março',
+        'abril',
+        'maio',
+        'junho',
+        'julho',
+        'agosto',
+        'setembro',
+        'outubro',
+        'novembro',
+        'dezembro',
+      ];
+      return '${months[date.month - 1]} de ${date.year}';
+    }
+
+    final groupedFiles = <String, List<TCloudFile>>{};
+    if (_homeFilesSort == 'Mais recentes' || _homeFilesSort == 'Mais antigos') {
+      for (final file in filteredFiles) {
+        groupedFiles.putIfAbsent(dateGroup(file), () => []).add(file);
+      }
+    } else {
+      groupedFiles['Resultados'] = filteredFiles;
+    }
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -4360,35 +4420,55 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               ),
             )
           else
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 130),
-              sliver: SliverGrid.builder(
-                itemCount: filteredFiles.length,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: _homeGridColumns,
-                  crossAxisSpacing: 6,
-                  mainAxisSpacing: 10,
-                  childAspectRatio: .78,
+            for (final group in groupedFiles.entries) ...[
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 8),
+                  child: Text(
+                    group.key,
+                    style: TextStyle(
+                      color: TCloudTheme.textSecondary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
-                itemBuilder: (context, index) {
-                  final file = filteredFiles[index];
-                  return _HomeFileGridTile(
-                    file: file,
-                    repo: _repo,
-                    selected: _selectedMediaIds.contains(file.fileId),
-                    hidePreview: _hideHomePreviews,
-                    onLongPress: () => _toggleMediaSelection(file),
-                    onTap: () {
-                      if (_mediaSelectionMode) {
-                        _toggleMediaSelection(file);
-                        return;
-                      }
-                      _openHomeFile(file, filteredFiles);
-                    },
-                  );
-                },
               ),
-            ),
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  12,
+                  0,
+                  12,
+                  group.key == groupedFiles.keys.last ? 130 : 8,
+                ),
+                sliver: SliverGrid.builder(
+                  itemCount: group.value.length,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: _homeGridColumns,
+                    crossAxisSpacing: 6,
+                    mainAxisSpacing: 10,
+                    childAspectRatio: .78,
+                  ),
+                  itemBuilder: (context, index) {
+                    final file = group.value[index];
+                    return _HomeFileGridTile(
+                      file: file,
+                      repo: _repo,
+                      selected: _selectedMediaIds.contains(file.fileId),
+                      hidePreview: _hideHomePreviews,
+                      onLongPress: () => _toggleMediaSelection(file),
+                      onTap: () {
+                        if (_mediaSelectionMode) {
+                          _toggleMediaSelection(file);
+                          return;
+                        }
+                        _openHomeFile(file, filteredFiles);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
         ],
       ),
     );
@@ -4828,6 +4908,8 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
             ? _MediaSelectionHotbar(
                 count: _selectedMediaIds.length,
                 onCancel: _clearMediaSelection,
+                onSelectAll: _selectAllVisibleHomeFiles,
+                onFavorite: _favoriteSelectedMedia,
                 onMove: _moveSelectedMedia,
                 onDelete: _deleteSelectedMedia,
                 onOffline: _offlineSelectedMedia,
@@ -4961,6 +5043,8 @@ class _MediaSelectionHotbar extends StatelessWidget {
   const _MediaSelectionHotbar({
     required this.count,
     required this.onCancel,
+    required this.onSelectAll,
+    required this.onFavorite,
     required this.onMove,
     required this.onDelete,
     required this.onOffline,
@@ -4970,6 +5054,8 @@ class _MediaSelectionHotbar extends StatelessWidget {
 
   final int count;
   final VoidCallback onCancel;
+  final VoidCallback onSelectAll;
+  final VoidCallback onFavorite;
   final VoidCallback onMove;
   final VoidCallback onDelete;
   final VoidCallback onOffline;
@@ -5008,6 +5094,25 @@ class _MediaSelectionHotbar extends StatelessWidget {
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
+            PopupMenuButton<String>(
+              tooltip: 'Mais ações',
+              onSelected: (value) {
+                if (value == 'all') onSelectAll();
+                if (value == 'favorite') onFavorite();
+                if (value == 'move') onMove();
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'all',
+                  child: Text('Selecionar todos os visíveis'),
+                ),
+                PopupMenuItem(
+                  value: 'favorite',
+                  child: Text('Adicionar aos favoritos'),
+                ),
+                PopupMenuItem(value: 'move', child: Text('Mover para pasta')),
+              ],
+            ),
             IconButton(
               tooltip: 'Offline',
               onPressed: onOffline,
@@ -5024,11 +5129,6 @@ class _MediaSelectionHotbar extends StatelessWidget {
                 onPressed: onInfo,
                 icon: const Icon(Icons.info_outline),
               ),
-            IconButton(
-              tooltip: 'Mover',
-              onPressed: onMove,
-              icon: const Icon(Icons.drive_file_move_outlined),
-            ),
             IconButton(
               tooltip: 'Excluir',
               onPressed: onDelete,

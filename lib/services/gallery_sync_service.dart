@@ -44,6 +44,8 @@ class GallerySyncService {
   int _activityUploaded = 0;
   int _activityFailed = 0;
   bool _activityRunning = false;
+  DateTime? _activityStartedAt;
+  DateTime? _activityLastProgressAt;
   final Map<String, Map<String, dynamic>> _activityItems =
       <String, Map<String, dynamic>>{};
 
@@ -65,6 +67,8 @@ class GallerySyncService {
     _activityUploaded = 0;
     _activityFailed = 0;
     _activityRunning = batch.isNotEmpty;
+    _activityStartedAt = DateTime.now();
+    _activityLastProgressAt = _activityStartedAt;
 
     await _td.showGallerySyncProgress(
       total: _activityTotal,
@@ -91,6 +95,9 @@ class GallerySyncService {
     if (uri.isEmpty) return;
     final current = _activityItems[uri];
     if (current != null) current['state'] = state;
+    if (state == 'concluido' || state == 'erro') {
+      _activityLastProgressAt = DateTime.now();
+    }
   }
 
   Future<Map<String, dynamic>> syncActivitySnapshot() async {
@@ -117,12 +124,31 @@ class GallerySyncService {
       merged[key] = item;
     }
 
+    final completed = _activityUploaded + _activityFailed;
+    final elapsedSeconds = _activityStartedAt == null
+        ? 0
+        : DateTime.now().difference(_activityStartedAt!).inSeconds;
+    final filesPerMinute = elapsedSeconds > 0
+        ? completed * 60 / elapsedSeconds
+        : 0.0;
+    final remaining = (_activityTotal - completed).clamp(0, _activityTotal);
+    final etaSeconds = filesPerMinute > 0
+        ? (remaining * 60 / filesPerMinute).round()
+        : 0;
+    final stalledSeconds = _activityLastProgressAt == null
+        ? 0
+        : DateTime.now().difference(_activityLastProgressAt!).inSeconds;
+
     return <String, dynamic>{
       'running': _activityRunning,
       'total': _activityTotal,
       'uploaded': _activityUploaded,
       'failed': _activityFailed,
       'pendingNative': native.length,
+      'filesPerMinute': filesPerMinute,
+      'etaSeconds': etaSeconds,
+      'stalled': _activityRunning && stalledSeconds >= 90,
+      'lastProgressAt': _activityLastProgressAt?.millisecondsSinceEpoch,
       'items': merged.values.toList(),
     };
   }

@@ -57,6 +57,10 @@ class _SyncQueueScreenState extends State<SyncQueueScreen> {
     final failed = _asInt(_snapshot['failed']);
     final pending = _asInt(_snapshot['pendingNative']);
     final running = _snapshot['running'] == true;
+    final stalled = _snapshot['stalled'] == true;
+    final filesPerMinute =
+        (_snapshot['filesPerMinute'] as num?)?.toDouble() ?? 0;
+    final etaSeconds = _asInt(_snapshot['etaSeconds']);
 
     final done = uploaded + failed;
     final progress = total > 0 ? (done / total).clamp(0.0, 1.0) : null;
@@ -86,7 +90,9 @@ class _SyncQueueScreenState extends State<SyncQueueScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          running
+                          stalled
+                              ? 'Sincronização demorando mais que o normal'
+                              : running
                               ? 'Sincronizando agora'
                               : pending > 0
                               ? 'Arquivos aguardando'
@@ -110,6 +116,20 @@ class _SyncQueueScreenState extends State<SyncQueueScreen> {
                             '$failed com falha; nova tentativa sera feita.',
                             style: TextStyle(color: TCloudTheme.textSecondary),
                           ),
+                        if (running && filesPerMinute > 0) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            '${filesPerMinute.toStringAsFixed(1)} arquivo(s)/min'
+                            '${etaSeconds > 0 ? ' · cerca de ${(etaSeconds / 60).ceil()} min restantes' : ''}',
+                            style: TextStyle(color: TCloudTheme.textSecondary),
+                          ),
+                        ],
+                        if (stalled) ...[
+                          const SizedBox(height: 10),
+                          const Text(
+                            'O item atual será preservado na fila e retomado automaticamente sem recomeçar os concluídos.',
+                          ),
+                        ],
                       ],
                     ),
                   ),
