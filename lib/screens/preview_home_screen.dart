@@ -1686,16 +1686,56 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   Future<void> _openSmartStorage() async {
     var limit = await _sync.cacheLimitMb();
     var info = await _sync.cacheInfo();
+    final cloudBytes = _allFiles.fold<int>(
+      0,
+      (total, file) => total + file.size,
+    );
+    final offlineBytes = _offline.fold<int>(
+      0,
+      (total, file) => total + file.size,
+    );
+    final largeFiles = _allFiles
+        .where((file) => file.size > 100 * 1024 * 1024)
+        .length;
+    final oldThreshold =
+        DateTime.now()
+            .subtract(const Duration(days: 365))
+            .millisecondsSinceEpoch ~/
+        1000;
+    final oldFiles = _allFiles
+        .where((file) => file.createdAt > 0 && file.createdAt < oldThreshold)
+        .length;
+    final duplicateGroups = <String, List<TCloudFile>>{};
+    for (final file in _allFiles) {
+      duplicateGroups
+          .putIfAbsent(
+            '${file.name.trim().toLowerCase()}:${file.size}',
+            () => [],
+          )
+          .add(file);
+    }
+    final duplicates = duplicateGroups.values.where(
+      (group) => group.length > 1,
+    );
+    final duplicateCount = duplicates.fold<int>(
+      0,
+      (total, group) => total + group.length - 1,
+    );
+    final duplicateBytes = duplicates.fold<int>(
+      0,
+      (total, group) => total + (group.length - 1) * group.first.size,
+    );
     if (!mounted) return;
 
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
             return SafeArea(
-              child: Padding(
+              child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1713,6 +1753,79 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                       'Cache temporario: ${_formatCacheBytes(info['bytes'])}',
                       style: TextStyle(color: TCloudTheme.textSecondary),
                     ),
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _StorageMetricCard(
+                          label: 'Na nuvem',
+                          value: _humanSize(cloudBytes),
+                          icon: Icons.cloud_outlined,
+                        ),
+                        _StorageMetricCard(
+                          label: 'Offline',
+                          value: _humanSize(offlineBytes),
+                          icon: Icons.offline_pin_outlined,
+                        ),
+                        _StorageMetricCard(
+                          label: 'Arquivos grandes',
+                          value: '$largeFiles',
+                          icon: Icons.data_usage_rounded,
+                        ),
+                        _StorageMetricCard(
+                          label: 'Duplicados',
+                          value: '$duplicateCount',
+                          icon: Icons.content_copy_rounded,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.copy_all_outlined),
+                      title: Text('$duplicateCount possível(is) duplicado(s)'),
+                      subtitle: Text(
+                        'Até ${_humanSize(duplicateBytes)} para revisar com segurança.',
+                      ),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: duplicateCount == 0
+                          ? null
+                          : () {
+                              Navigator.pop(sheetContext);
+                              setState(() {
+                                _currentIndex = 0;
+                                _homeFilesFilter = 'Duplicados';
+                              });
+                            },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.sd_storage_outlined),
+                      title: Text('$largeFiles arquivo(s) acima de 100 MB'),
+                      subtitle: const Text('Revise os maiores primeiro.'),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: largeFiles == 0
+                          ? null
+                          : () {
+                              Navigator.pop(sheetContext);
+                              setState(() {
+                                _currentIndex = 0;
+                                _homeFilesFilter = 'Todos';
+                                _homeSizeFilter = 'Mais de 100 MB';
+                                _homeFilesSort = 'Maior tamanho';
+                              });
+                            },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.history_rounded),
+                      title: Text('$oldFiles arquivo(s) com mais de um ano'),
+                      subtitle: const Text(
+                        'Informativo; nada será apagado automaticamente.',
+                      ),
+                    ),
+                    const Divider(height: 28),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<int>(
                       initialValue: limit,
@@ -3408,7 +3521,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                           ),
                           SizedBox(height: 3),
                           Text(
-                            'Android • versão 1.1.30',
+                            'Android • versão 1.1.31',
                             style: TextStyle(color: TCloudTheme.textSecondary),
                           ),
                         ],
@@ -5300,6 +5413,48 @@ class _MediaSelectionHotbar extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _StorageMetricCard extends StatelessWidget {
+  const _StorageMetricCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final width = (MediaQuery.sizeOf(context).width - 50) / 2;
+    return Container(
+      width: width,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: TCloudTheme.surfaceSoft,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: TCloudTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: TCloudTheme.primary),
+          const SizedBox(height: 10),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, color: TCloudTheme.textSecondary),
+          ),
+        ],
       ),
     );
   }
