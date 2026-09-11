@@ -3408,7 +3408,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                           ),
                           SizedBox(height: 3),
                           Text(
-                            'Android • versão 1.1.29',
+                            'Android • versão 1.1.30',
                             style: TextStyle(color: TCloudTheme.textSecondary),
                           ),
                         ],

@@ -57,6 +57,9 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
   double _doubleTapDx = 0;
   double _dismissOffset = 0;
   double _speed = 1;
+  bool _autoPlayNext = true;
+  bool _loopVideo = false;
+  bool _completionHandled = false;
   Timer? _hideTimer;
 
   TCloudFile get _file => _items[_index];
@@ -76,8 +79,24 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
       _index = 0;
     }
     _pages = PageController(initialPage: _index);
-    unawaited(_prepare(_file));
+    unawaited(_loadPlaybackPreferences().then((_) => _prepare(_file)));
     _prewarmAround();
+  }
+
+  Future<void> _loadPlaybackPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    _speed = prefs.getDouble('tcloud:viewer-speed') ?? 1;
+    _autoPlayNext = prefs.getBool('tcloud:viewer-auto-next') ?? true;
+    _loopVideo = prefs.getBool('tcloud:viewer-loop') ?? false;
+  }
+
+  Future<void> _savePlaybackPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    await Future.wait([
+      prefs.setDouble('tcloud:viewer-speed', _speed),
+      prefs.setBool('tcloud:viewer-auto-next', _autoPlayNext),
+      prefs.setBool('tcloud:viewer-loop', _loopVideo),
+    ]);
   }
 
   @override
@@ -345,6 +364,7 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
 
         await c.setLooping(false);
         await c.setPlaybackSpeed(_speed);
+        await c.setLooping(_loopVideo);
         await _restorePosition(current, c, resume);
 
         if (!mounted ||
@@ -401,6 +421,24 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
     }
 
     final value = c.value;
+
+    if (value.isInitialized && value.duration > Duration.zero) {
+      final finished =
+          value.position >= value.duration - const Duration(milliseconds: 350);
+      if (!finished) {
+        _completionHandled = false;
+      } else if (!_completionHandled && !_loopVideo) {
+        _completionHandled = true;
+        if (_autoPlayNext && _index + 1 < _items.length) {
+          unawaited(
+            _pages.nextPage(
+              duration: const Duration(milliseconds: 320),
+              curve: Curves.easeOutCubic,
+            ),
+          );
+        }
+      }
+    }
 
     if (value.hasError) {
       debugPrint('TCloud backend: ${value.errorDescription}');
@@ -618,6 +656,16 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
     }
   }
 
+  Future<void> _goToAdjacent(int delta) async {
+    final target = _index + delta;
+    if (target < 0 || target >= _items.length) return;
+    await _pages.animateToPage(
+      target,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   void _captureDoubleTap(TapDownDetails d) => _doubleTapDx = d.localPosition.dx;
 
   Future<void> _doubleTapSeek() async {
@@ -679,6 +727,7 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
     if (selected == null) return;
     _speed = selected;
     await _video?.setPlaybackSpeed(selected);
+    await _savePlaybackPreferences();
     if (mounted) setState(() {});
     _scheduleHide();
   }
@@ -703,6 +752,29 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
                 onTap: () {
                   Navigator.pop(sheet);
                   _chooseSpeed();
+                },
+              ),
+            if (_file.isVideo)
+              SwitchListTile(
+                secondary: const Icon(Icons.skip_next_rounded),
+                title: const Text('Reproduzir o próximo automaticamente'),
+                value: _autoPlayNext,
+                onChanged: (value) async {
+                  setState(() => _autoPlayNext = value);
+                  await _savePlaybackPreferences();
+                  if (sheet.mounted) Navigator.pop(sheet);
+                },
+              ),
+            if (_file.isVideo)
+              SwitchListTile(
+                secondary: const Icon(Icons.repeat_one_rounded),
+                title: const Text('Repetir este vídeo'),
+                value: _loopVideo,
+                onChanged: (value) async {
+                  setState(() => _loopVideo = value);
+                  await _video?.setLooping(value);
+                  await _savePlaybackPreferences();
+                  if (sheet.mounted) Navigator.pop(sheet);
                 },
               ),
             if (_file.isVideo)
@@ -1069,6 +1141,16 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
                           Row(
                             children: [
                               IconButton(
+                                tooltip: 'Anterior',
+                                onPressed: _index > 0
+                                    ? () => _goToAdjacent(-1)
+                                    : null,
+                                icon: const Icon(
+                                  Icons.skip_previous_rounded,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              IconButton(
                                 onPressed: _togglePlay,
                                 padding: const EdgeInsets.all(4),
                                 constraints: const BoxConstraints(
@@ -1081,6 +1163,16 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
                                       : Icons.play_arrow_rounded,
                                   color: Colors.white,
                                   size: 30,
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Próximo',
+                                onPressed: _index + 1 < _items.length
+                                    ? () => _goToAdjacent(1)
+                                    : null,
+                                icon: const Icon(
+                                  Icons.skip_next_rounded,
+                                  color: Colors.white,
                                 ),
                               ),
                               const SizedBox(width: 2),
