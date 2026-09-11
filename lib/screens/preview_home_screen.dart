@@ -1873,6 +1873,45 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     );
   }
 
+  Future<void> _chooseBiometricTimeout(int current) async {
+    final selected = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              title: Text(
+                'Bloquear automaticamente',
+                style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
+              ),
+            ),
+            for (final option in const <(int, String)>[
+              (0, 'Imediatamente'),
+              (8, 'Após 8 segundos'),
+              (30, 'Após 30 segundos'),
+              (60, 'Após 1 minuto'),
+              (300, 'Após 5 minutos'),
+            ])
+              ListTile(
+                leading: Icon(
+                  option.$1 == current
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                ),
+                title: Text(option.$2),
+                onTap: () => Navigator.pop(sheetContext, option.$1),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null) return;
+    await BiometricLockService.instance.setTimeoutSeconds(selected);
+    if (mounted) setState(() {});
+  }
+
   Future<void> _undoGalleryBackup() async {
     final count = await _sync.backupRecordCount();
     if (!mounted) return;
@@ -3465,6 +3504,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         AccountService.instance.accounts(),
         AccountService.instance.activeId(),
         BiometricLockService.instance.isEnabled(),
+        BiometricLockService.instance.timeoutSeconds(),
       ]),
       builder: (context, snapshot) {
         final v =
@@ -3485,6 +3525,16 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
             : const <TCloudAccount>[];
         final activeAccount = v.length > 8 ? v[8]?.toString() : 'default';
         final biometricEnabled = v.length > 9 && v[9] == true;
+        final biometricTimeout = v.length > 10 && v[10] is int
+            ? v[10] as int
+            : 8;
+        final biometricTimeoutLabel = switch (biometricTimeout) {
+          0 => 'Imediatamente',
+          30 => 'Após 30 segundos',
+          60 => 'Após 1 minuto',
+          300 => 'Após 5 minutos',
+          _ => 'Após 8 segundos',
+        };
         return ListView(
           padding: const EdgeInsets.only(top: 8, bottom: 120),
           children: [
@@ -3521,7 +3571,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                           ),
                           SizedBox(height: 3),
                           Text(
-                            'Android • versão 1.1.31',
+                            'Android • versão 1.1.32',
                             style: TextStyle(color: TCloudTheme.textSecondary),
                           ),
                         ],
@@ -3683,6 +3733,16 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                   }
                 },
               ),
+              if (biometricEnabled) ...[
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.timer_outlined),
+                  title: const Text('Bloqueio automático'),
+                  subtitle: Text(biometricTimeoutLabel),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => _chooseBiometricTimeout(biometricTimeout),
+                ),
+              ],
               const Divider(height: 1),
               ListTile(
                 leading: const Icon(Icons.badge_outlined),

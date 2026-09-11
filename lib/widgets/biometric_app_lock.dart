@@ -63,13 +63,18 @@ class _BiometricAppLockState extends State<BiometricAppLock>
     if (state != AppLifecycleState.resumed || _authenticating) return;
     final backgroundedAt = _backgroundedAt;
     _backgroundedAt = null;
-    if (backgroundedAt == null ||
-        DateTime.now().difference(backgroundedAt) <
-            const Duration(seconds: 8)) {
+    if (backgroundedAt == null) {
       return;
     }
     unawaited(() async {
-      if (!await BiometricLockService.instance.isEnabled() || !mounted) return;
+      final service = BiometricLockService.instance;
+      if (!await service.isEnabled() || !mounted) return;
+      final timeout = await service.timeoutSeconds();
+      if (DateTime.now().difference(backgroundedAt) <
+          Duration(seconds: timeout)) {
+        return;
+      }
+      if (!mounted) return;
       setState(() => _locked = true);
       await _unlock();
     }());

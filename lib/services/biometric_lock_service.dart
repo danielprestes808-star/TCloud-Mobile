@@ -8,6 +8,7 @@ class BiometricLockService {
 
   static final instance = BiometricLockService._();
   static const _enabledKey = 'tcloud_biometric_lock_enabled_v1';
+  static const _timeoutKey = 'tcloud_biometric_lock_timeout_seconds_v1';
   final LocalAuthentication _auth = LocalAuthentication();
 
   Future<bool> isEnabled() async {
@@ -55,5 +56,18 @@ class BiometricLockService {
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_enabledKey, enabled);
+  }
+
+  Future<int> timeoutSeconds() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_timeoutKey) ?? 8;
+  }
+
+  Future<void> setTimeoutSeconds(int seconds) async {
+    if (!const <int>{0, 8, 30, 60, 300}.contains(seconds)) {
+      throw ArgumentError.value(seconds, 'seconds');
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_timeoutKey, seconds);
   }
 }
