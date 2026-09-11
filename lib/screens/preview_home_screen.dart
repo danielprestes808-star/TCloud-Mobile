@@ -411,7 +411,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         });
       setState(() {
         _media = sorted.take(allFolders ? 120 : 160).toList();
-        _allFiles = allSorted.take(allFolders ? 240 : 160).toList();
+        _allFiles = allSorted;
       });
     }
 
@@ -3583,7 +3583,6 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 _ => true,
               },
         )
-        .take(30)
         .toList();
 
     return RefreshIndicator(
