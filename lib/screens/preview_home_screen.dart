@@ -3705,7 +3705,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                           ),
                           SizedBox(height: 3),
                           Text(
-                            'Android • versão 1.1.33',
+                            'Android • versão 1.1.34',
                             style: TextStyle(color: TCloudTheme.textSecondary),
                           ),
                         ],
@@ -3999,6 +3999,33 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                   if (mounted) setState(() {});
                 },
               ),
+              if (documentProviderEnabled) ...[
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.open_in_new_rounded),
+                  title: const Text('Abrir seletor de arquivos'),
+                  subtitle: Text(
+                    _offline.isEmpty
+                        ? 'Baixe um arquivo ou uma pasta para disponibilizá-los em outros aplicativos.'
+                        : '${_offline.length} item(ns) offline pronto(s) para anexar.',
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () async {
+                    try {
+                      await TdlibService.instance.openDocumentProvider();
+                    } catch (error) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Não foi possível abrir o seletor: $error',
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                ),
+              ],
             ]),
             section('SUPORTE AVANÇADO', [
               ListTile(

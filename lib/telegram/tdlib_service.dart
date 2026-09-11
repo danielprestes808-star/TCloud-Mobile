@@ -430,6 +430,10 @@ class TdlibService {
     );
   }
 
+  Future<bool> openDocumentProvider() async {
+    return await _methods.invokeMethod<bool>('openDocumentProvider') ?? false;
+  }
+
   Future<Map<String, dynamic>> execute(
     String function, [
     Map<String, dynamic> fields = const {},

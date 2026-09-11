@@ -467,6 +467,20 @@ else -> result.notImplemented()
                     result.success(true)
                 }
 
+                "openDocumentProvider" -> {
+                    try {
+                        startActivity(
+                            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                                addCategory(Intent.CATEGORY_OPENABLE)
+                                type = "*/*"
+                            }
+                        )
+                        result.success(true)
+                    } catch (error: Throwable) {
+                        result.error("DOCUMENT_PROVIDER", error.message, null)
+                    }
+                }
+
                 "enterPictureInPicture" -> {
                     try {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
