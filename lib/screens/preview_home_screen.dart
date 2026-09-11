@@ -9,6 +9,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:open_filex/open_filex.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/tcloud_theme.dart';
 import '../design_system/tcloud_design_system.dart';
@@ -67,6 +68,10 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   bool _filesGrid = false;
   String _filesFilter = 'Todos';
   String _homeFilesFilter = 'Todos';
+  String _homeFilesSort = 'Mais recentes';
+  int _homeGridColumns = 3;
+  bool _hideHomePreviews = false;
+  Set<String> _resumableVideoIds = <String>{};
   bool _showMediaSearch = false;
   String _mediaQuery = '';
 
@@ -266,6 +271,8 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
 
     super.initState();
 
+    unawaited(_loadHomeDisplayPreferences());
+
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _checkForUpdatePopup();
       if (!mounted || await TCloudDeviceAuth.instance.validate()) return;
@@ -294,6 +301,43 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
       await _consumeSharedFiles();
       await _autoSyncGallery();
     });
+  }
+
+  Future<void> _loadHomeDisplayPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final columns = (prefs.getInt('tcloud:home-grid-columns') ?? 3).clamp(2, 4);
+    final resumable = prefs
+        .getKeys()
+        .where((key) => key.startsWith('tcloud:video-resume:'))
+        .where((key) => (prefs.getInt(key) ?? 0) >= 5000)
+        .map((key) => key.substring('tcloud:video-resume:'.length))
+        .toSet();
+    if (!mounted) return;
+    setState(() {
+      _homeGridColumns = columns;
+      _homeFilesSort =
+          prefs.getString('tcloud:home-files-sort') ?? 'Mais recentes';
+      _hideHomePreviews = prefs.getBool('tcloud:hide-home-previews') ?? false;
+      _resumableVideoIds = resumable;
+    });
+  }
+
+  Future<void> _setHomeGridColumns(int value) async {
+    setState(() => _homeGridColumns = value);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('tcloud:home-grid-columns', value);
+  }
+
+  Future<void> _setHomeFilesSort(String value) async {
+    setState(() => _homeFilesSort = value);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('tcloud:home-files-sort', value);
+  }
+
+  Future<void> _toggleHomePreviewPrivacy() async {
+    setState(() => _hideHomePreviews = !_hideHomePreviews);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('tcloud:hide-home-previews', _hideHomePreviews);
   }
 
   @override
@@ -474,9 +518,40 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   }
 
   List<TCloudFile> get _selectedMedia {
-    return _media
+    return _allFiles
         .where((file) => _selectedMediaIds.contains(file.fileId))
         .toList();
+  }
+
+  Future<void> _openHomeFile(
+    TCloudFile file,
+    List<TCloudFile> visibleFiles,
+  ) async {
+    if (file.isMedia) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => MediaViewerScreen(
+            file: file,
+            files: visibleFiles.where((item) => item.isMedia).toList(),
+          ),
+        ),
+      );
+      await _loadHomeDisplayPreferences();
+      return;
+    }
+
+    try {
+      var path = file.localPath;
+      if (path == null || path.isEmpty || !File(path).existsSync()) {
+        path = await _repo.download(file);
+      }
+      await OpenFilex.open(path);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Não foi possível abrir ${file.name}: $error')),
+      );
+    }
   }
 
   Future<String?> _askAlbumName() async {
@@ -3213,7 +3288,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                           ),
                           SizedBox(height: 3),
                           Text(
-                            'Android • versão 1.1.26',
+                            'Android • versão 1.1.27',
                             style: TextStyle(color: TCloudTheme.textSecondary),
                           ),
                         ],
@@ -3580,14 +3655,49 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
             file.kind.toLowerCase().contains(q));
     final recent = _media.where(isVisible).take(12).toList();
     _recentCarouselItemCount = recent.length;
-    final filteredFiles = _allFiles.where((file) {
-      if (!isVisible(file)) return false;
-      return switch (_homeFilesFilter) {
-        'Fotos' => file.isImage,
-        'Vídeos' => file.isVideo,
-        _ => true,
-      };
-    }).toList();
+    final duplicateKeys = <String, int>{};
+    for (final file in _allFiles.where(isVisible)) {
+      final key = '${file.name.trim().toLowerCase()}:${file.size}';
+      duplicateKeys[key] = (duplicateKeys[key] ?? 0) + 1;
+    }
+    final filteredFiles =
+        _allFiles.where((file) {
+          if (!isVisible(file)) return false;
+          return switch (_homeFilesFilter) {
+            'Fotos' => file.isImage,
+            'Vídeos' => file.isVideo,
+            'Documentos' => !file.isMedia,
+            'Capturas' =>
+              file.isImage &&
+                  (file.name.toLowerCase().contains('screenshot') ||
+                      file.name.toLowerCase().contains('captura de tela')),
+            'Favoritos' => _favorites.contains(file.contentIdentity),
+            'Offline' => _offline.any(
+              (item) => item.contentIdentity == file.contentIdentity,
+            ),
+            'Duplicados' =>
+              (duplicateKeys['${file.name.trim().toLowerCase()}:${file.size}'] ??
+                      0) >
+                  1,
+            _ => true,
+          };
+        }).toList()..sort(
+          (a, b) => switch (_homeFilesSort) {
+            'Nome' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+            'Maior tamanho' => b.size.compareTo(a.size),
+            'Mais antigos' => a.createdAt.compareTo(b.createdAt),
+            _ => b.createdAt.compareTo(a.createdAt),
+          },
+        );
+    final continueWatching = _allFiles
+        .where(
+          (file) =>
+              file.isVideo &&
+              isVisible(file) &&
+              _resumableVideoIds.contains(file.syncIdentity),
+        )
+        .take(10)
+        .toList();
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -3993,6 +4103,45 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 ),
               ),
             ),
+          if (continueWatching.isNotEmpty) ...[
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(18, 24, 18, 10),
+                child: Text(
+                  'Continuar assistindo',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 126,
+                child: ListView.separated(
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  scrollDirection: Axis.horizontal,
+                  itemCount: continueWatching.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 10),
+                  itemBuilder: (_, index) {
+                    final file = continueWatching[index];
+                    return SizedBox(
+                      width: 190,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: _HomeThumbnail(
+                          file: file,
+                          repo: _repo,
+                          selected: _selectedMediaIds.contains(file.fileId),
+                          hidePreview: _hideHomePreviews,
+                          onLongPress: () => _toggleMediaSelection(file),
+                          onTap: () => _openHomeFile(file, continueWatching),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(18, 24, 18, 10),
@@ -4059,18 +4208,14 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                             file: f,
                             repo: _repo,
                             selected: _selectedMediaIds.contains(f.fileId),
+                            hidePreview: _hideHomePreviews,
                             onLongPress: () => _toggleMediaSelection(f),
                             onTap: () {
                               if (_mediaSelectionMode) {
                                 _toggleMediaSelection(f);
                                 return;
                               }
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (_) =>
-                                      MediaViewerScreen(file: f, files: recent),
-                                ),
-                              );
+                              _openHomeFile(f, recent);
                             },
                           ),
                         ),
@@ -4098,6 +4243,71 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                     '${filteredFiles.length}',
                     style: TextStyle(color: TCloudTheme.textSecondary),
                   ),
+                  PopupMenuButton<String>(
+                    tooltip: 'Organizar e visualizar',
+                    icon: const Icon(Icons.tune_rounded),
+                    onSelected: (value) {
+                      if (value.startsWith('sort:')) {
+                        _setHomeFilesSort(value.substring(5));
+                      } else if (value.startsWith('grid:')) {
+                        _setHomeGridColumns(int.parse(value.substring(5)));
+                      } else if (value == 'privacy') {
+                        _toggleHomePreviewPrivacy();
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        enabled: false,
+                        child: Text('ORDENAR POR'),
+                      ),
+                      for (final sort in const [
+                        'Mais recentes',
+                        'Mais antigos',
+                        'Nome',
+                        'Maior tamanho',
+                      ])
+                        PopupMenuItem(
+                          value: 'sort:$sort',
+                          child: Row(
+                            children: [
+                              Icon(
+                                _homeFilesSort == sort
+                                    ? Icons.radio_button_checked
+                                    : Icons.radio_button_off,
+                                size: 19,
+                              ),
+                              const SizedBox(width: 10),
+                              Text(sort),
+                            ],
+                          ),
+                        ),
+                      const PopupMenuDivider(),
+                      for (final columns in const [2, 3, 4])
+                        PopupMenuItem(
+                          value: 'grid:$columns',
+                          child: Text('$columns colunas'),
+                        ),
+                      const PopupMenuDivider(),
+                      PopupMenuItem(
+                        value: 'privacy',
+                        child: Row(
+                          children: [
+                            Icon(
+                              _hideHomePreviews
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              _hideHomePreviews
+                                  ? 'Mostrar miniaturas'
+                                  : 'Ocultar miniaturas',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -4113,6 +4323,22 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 ),
                 children: [
                   for (final filter in const ['Todos', 'Fotos', 'Vídeos'])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: FilterChip(
+                        label: Text(filter),
+                        selected: _homeFilesFilter == filter,
+                        onSelected: (_) =>
+                            setState(() => _homeFilesFilter = filter),
+                      ),
+                    ),
+                  for (final filter in const [
+                    'Documentos',
+                    'Capturas',
+                    'Favoritos',
+                    'Offline',
+                    'Duplicados',
+                  ])
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: FilterChip(
@@ -4138,8 +4364,8 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 130),
               sliver: SliverGrid.builder(
                 itemCount: filteredFiles.length,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: _homeGridColumns,
                   crossAxisSpacing: 6,
                   mainAxisSpacing: 10,
                   childAspectRatio: .78,
@@ -4150,20 +4376,14 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                     file: file,
                     repo: _repo,
                     selected: _selectedMediaIds.contains(file.fileId),
+                    hidePreview: _hideHomePreviews,
                     onLongPress: () => _toggleMediaSelection(file),
                     onTap: () {
                       if (_mediaSelectionMode) {
                         _toggleMediaSelection(file);
                         return;
                       }
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => MediaViewerScreen(
-                            file: file,
-                            files: filteredFiles,
-                          ),
-                        ),
-                      );
+                      _openHomeFile(file, filteredFiles);
                     },
                   );
                 },
@@ -5564,6 +5784,7 @@ class _HomeFileGridTile extends StatelessWidget {
     required this.file,
     required this.repo,
     required this.selected,
+    this.hidePreview = false,
     required this.onTap,
     required this.onLongPress,
   });
@@ -5571,6 +5792,7 @@ class _HomeFileGridTile extends StatelessWidget {
   final TCloudFile file;
   final TCloudRepository repo;
   final bool selected;
+  final bool hidePreview;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
@@ -5588,6 +5810,7 @@ class _HomeFileGridTile extends StatelessWidget {
               file: file,
               repo: repo,
               selected: selected,
+              hidePreview: hidePreview,
               onTap: onTap,
               onLongPress: onLongPress,
             ),
@@ -5626,6 +5849,7 @@ class _HomeThumbnail extends StatefulWidget {
     required this.file,
     required this.repo,
     required this.selected,
+    this.hidePreview = false,
     required this.onTap,
     required this.onLongPress,
     this.onLongPressStart,
@@ -5637,6 +5861,7 @@ class _HomeThumbnail extends StatefulWidget {
   final TCloudFile file;
   final TCloudRepository repo;
   final bool selected;
+  final bool hidePreview;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
   final GestureLongPressStartCallback? onLongPressStart;
@@ -5658,7 +5883,7 @@ class _HomeThumbnailState extends State<_HomeThumbnail> {
   void initState() {
     super.initState();
     _path = widget.file.thumbnailLocalPath;
-    _upgradePreviewForCurrentFile();
+    if (!widget.hidePreview) _upgradePreviewForCurrentFile();
   }
 
   String _previewIdentity(TCloudFile file) {
@@ -5673,7 +5898,13 @@ class _HomeThumbnailState extends State<_HomeThumbnail> {
   void didUpdateWidget(covariant _HomeThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    if (_previewIdentity(oldWidget.file) != _previewIdentity(widget.file)) {
+    if (widget.hidePreview) {
+      _previewRequestGeneration++;
+      return;
+    }
+
+    if (oldWidget.hidePreview ||
+        _previewIdentity(oldWidget.file) != _previewIdentity(widget.file)) {
       _previewRequestGeneration++;
       _path = widget.file.thumbnailLocalPath;
       _upgradePreviewForCurrentFile();
@@ -5722,7 +5953,18 @@ class _HomeThumbnailState extends State<_HomeThumbnail> {
 
     final instant = _cache.instantPreview(widget.file);
 
-    final Widget image = canShowFile
+    final Widget image = widget.hidePreview
+        ? ColoredBox(
+            color: TCloudTheme.surfaceSoft,
+            child: Center(
+              child: Icon(
+                Icons.visibility_off_outlined,
+                color: TCloudTheme.textSecondary,
+                size: 32,
+              ),
+            ),
+          )
+        : canShowFile
         ? Image.file(
             File(path),
             key: ValueKey<String>('file:$path'),
