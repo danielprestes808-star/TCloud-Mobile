@@ -183,7 +183,7 @@ class TCloudDeviceAuth {
                       ? 'TCloud Mobile'
                       : Platform.localHostname,
                   'platform': 'android',
-                  'appVersion': '1.1.34',
+                  'appVersion': '1.1.35',
                 },
         ),
       );
@@ -231,7 +231,7 @@ class TCloudDeviceAuth {
               ? 'TCloud Mobile'
               : Platform.localHostname,
           'platform': 'android',
-          'appVersion': '1.1.34',
+          'appVersion': '1.1.35',
         }),
       );
       final response = await request.close().timeout(

@@ -2,6 +2,8 @@ package com.tcloud.mobile
 
 import android.database.Cursor
 import android.database.MatrixCursor
+import android.content.res.AssetFileDescriptor
+import android.graphics.Point
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract.Document
@@ -62,7 +64,9 @@ class TCloudDocumentsProvider : DocumentsProvider() {
                     Root.COLUMN_DOCUMENT_ID -> row.add(rootId)
                     Root.COLUMN_TITLE -> row.add("TCloud")
                     Root.COLUMN_SUMMARY -> row.add("Arquivos disponíveis neste aparelho")
-                    Root.COLUMN_FLAGS -> row.add(Root.FLAG_SUPPORTS_SEARCH or Root.FLAG_LOCAL_ONLY)
+                    Root.COLUMN_FLAGS -> row.add(
+                        Root.FLAG_SUPPORTS_SEARCH or Root.FLAG_SUPPORTS_RECENTS or Root.FLAG_LOCAL_ONLY
+                    )
                     Root.COLUMN_MIME_TYPES -> row.add("*/*")
                     Root.COLUMN_AVAILABLE_BYTES -> row.add(context?.filesDir?.usableSpace ?: 0L)
                     else -> row.add(null)
@@ -87,6 +91,7 @@ class TCloudDocumentsProvider : DocumentsProvider() {
         } else {
             resolve(parentDocumentId)?.takeIf { it.isDirectory }?.listFiles()
                 ?.sortedWith(compareByDescending<File> { it.isDirectory }.thenBy { it.name.lowercase() })
+                ?.filter(::visible)
                 ?.take(1000)?.forEach { addDocument(cursor, it, id(it), it.name) }
         }
         return cursor
@@ -96,9 +101,23 @@ class TCloudDocumentsProvider : DocumentsProvider() {
         val cursor = MatrixCursor(documentColumns(projection))
         val needle = query.trim().lowercase()
         roots().forEach { root ->
-            root.walkTopDown().maxDepth(8).filter { it.isFile && it.name.lowercase().contains(needle) }
+            root.walkTopDown().maxDepth(8).filter {
+                it.isFile && visible(it) && it.name.lowercase().contains(needle)
+            }
                 .take(200).forEach { addDocument(cursor, it, id(it), it.name) }
         }
+        return cursor
+    }
+
+    override fun queryRecentDocuments(rootId: String, projection: Array<out String>?): Cursor {
+        val cursor = MatrixCursor(documentColumns(projection))
+        roots().asSequence()
+            .flatMap { it.walkTopDown().maxDepth(8) }
+            .filter { it.isFile && visible(it) }
+            .distinctBy { it.canonicalPath }
+            .sortedByDescending { it.lastModified() }
+            .take(64)
+            .forEach { addDocument(cursor, it, id(it), it.name) }
         return cursor
     }
 
@@ -109,16 +128,41 @@ class TCloudDocumentsProvider : DocumentsProvider() {
         return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
     }
 
+    override fun openDocumentThumbnail(
+        documentId: String,
+        sizeHint: Point,
+        signal: CancellationSignal?
+    ): AssetFileDescriptor {
+        val file = resolve(documentId)?.takeIf { it.isFile && mime(it).startsWith("image/") }
+            ?: throw java.io.FileNotFoundException(documentId)
+        return AssetFileDescriptor(
+            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY),
+            0,
+            AssetFileDescriptor.UNKNOWN_LENGTH,
+        )
+    }
+
     private fun documentColumns(projection: Array<out String>?) = projection ?: arrayOf(
         Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE,
         Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED, Document.COLUMN_FLAGS
     )
 
+    private fun visible(file: File): Boolean {
+        val name = file.name.lowercase()
+        return !file.isHidden && !name.endsWith(".part") && !name.endsWith(".tmp") &&
+            !name.endsWith(".db") && !name.endsWith(".db-shm") &&
+            !name.endsWith(".db-wal") && name != "tcloud-mobile-update.apk"
+    }
+
+    private fun mime(file: File): String {
+        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+            ?: "application/octet-stream"
+    }
+
     private fun addDocument(cursor: MatrixCursor, file: File?, documentId: String, name: String) {
         val directory = file == null || file.isDirectory
-        val extension = file?.extension?.lowercase().orEmpty()
         val mime = if (directory) Document.MIME_TYPE_DIR
-        else MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "application/octet-stream"
+        else mime(file!!)
         val row = cursor.newRow()
         cursor.columnNames.forEach { column ->
             when (column) {
@@ -127,7 +171,9 @@ class TCloudDocumentsProvider : DocumentsProvider() {
                 Document.COLUMN_MIME_TYPE -> row.add(mime)
                 Document.COLUMN_SIZE -> row.add(if (directory) null else file?.length())
                 Document.COLUMN_LAST_MODIFIED -> row.add(file?.lastModified() ?: 0L)
-                Document.COLUMN_FLAGS -> row.add(if (directory) 0 else Document.FLAG_SUPPORTS_THUMBNAIL)
+                Document.COLUMN_FLAGS -> row.add(
+                    if (!directory && mime.startsWith("image/")) Document.FLAG_SUPPORTS_THUMBNAIL else 0
+                )
                 else -> row.add(null)
             }
         }
