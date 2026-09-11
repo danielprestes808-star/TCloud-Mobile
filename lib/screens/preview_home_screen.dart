@@ -87,6 +87,8 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     viewportFraction: .88,
   );
   Timer? _recentCarouselTimer;
+  bool _recentCarouselInteracting = false;
+  int _recentCarouselItemCount = 0;
 
   Timer? _mediaDragAutoScrollTimer;
   Offset? _mediaDragLastGlobalPosition;
@@ -273,17 +275,18 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     WidgetsBinding.instance.addObserver(this);
     _recentCarouselTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted ||
+          _recentCarouselInteracting ||
           !_recentCarouselController.hasClients ||
-          _media.length < 2) {
+          _recentCarouselItemCount < 2) {
         return;
       }
       final current = (_recentCarouselController.page ?? 0).round();
-      final count = _media.length < 12 ? _media.length : 12;
+      final count = _recentCarouselItemCount;
       if (count < 2) return;
       _recentCarouselController.animateToPage(
         (current + 1) % count,
-        duration: const Duration(milliseconds: 420),
-        curve: Curves.easeOutCubic,
+        duration: const Duration(milliseconds: 680),
+        curve: Curves.easeInOutCubic,
       );
     });
 
@@ -3210,7 +3213,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                           ),
                           SizedBox(height: 3),
                           Text(
-                            'Android • versão 1.1.25',
+                            'Android • versão 1.1.26',
                             style: TextStyle(color: TCloudTheme.textSecondary),
                           ),
                         ],
@@ -3566,24 +3569,25 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               '${folder.chatId}:${folder.messageThreadId != 0 ? folder.messageThreadId : folder.forumTopicId}',
         )
         .toSet();
-    final recent = _allFiles
-        .where(
-          (file) =>
-              (_deviceSpace == 'all' ||
-                  visibleFolderKeys.contains(
-                    '${file.chatId}:${file.messageThreadId}',
-                  )) &&
-              !_trash.contains(file.contentIdentity) &&
-              (q.isEmpty ||
-                  file.name.toLowerCase().contains(q) ||
-                  file.kind.toLowerCase().contains(q)) &&
-              switch (_homeFilesFilter) {
-                'Fotos' => file.isImage,
-                'Vídeos' => file.isVideo,
-                _ => true,
-              },
-        )
-        .toList();
+    bool isVisible(TCloudFile file) =>
+        (_deviceSpace == 'all' ||
+            visibleFolderKeys.contains(
+              '${file.chatId}:${file.messageThreadId}',
+            )) &&
+        !_trash.contains(file.contentIdentity) &&
+        (q.isEmpty ||
+            file.name.toLowerCase().contains(q) ||
+            file.kind.toLowerCase().contains(q));
+    final recent = _media.where(isVisible).take(12).toList();
+    _recentCarouselItemCount = recent.length;
+    final filteredFiles = _allFiles.where((file) {
+      if (!isVisible(file)) return false;
+      return switch (_homeFilesFilter) {
+        'Fotos' => file.isImage,
+        'Vídeos' => file.isVideo,
+        _ => true,
+      };
+    }).toList();
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -3996,7 +4000,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 children: [
                   const Expanded(
                     child: Text(
-                      'Todos os arquivos',
+                      'Recentes',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
@@ -4011,14 +4015,101 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               ),
             ),
           ),
+          if (recent.isEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(18, 8, 18, 130),
+                child: Text(
+                  'As fotos e vídeos recentes aparecerão aqui.',
+                  style: TextStyle(color: TCloudTheme.textSecondary),
+                ),
+              ),
+            )
+          else
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 250,
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (notification is ScrollStartNotification) {
+                      _recentCarouselInteracting = true;
+                    } else if (notification is ScrollEndNotification) {
+                      _recentCarouselInteracting = false;
+                    }
+                    return false;
+                  },
+                  child: PageView.builder(
+                    controller: _recentCarouselController,
+                    physics: const BouncingScrollPhysics(),
+                    padEnds: false,
+                    itemCount: recent.length,
+                    itemBuilder: (_, i) {
+                      final f = recent[i];
+                      return Padding(
+                        padding: EdgeInsets.only(
+                          left: i == 0 ? 18 : 5,
+                          right: 5,
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: _HomeThumbnail(
+                            key: ValueKey<String>(
+                              'home-media:${f.chatId}:${f.messageThreadId}:${f.messageId}:${f.fileId}',
+                            ),
+                            file: f,
+                            repo: _repo,
+                            selected: _selectedMediaIds.contains(f.fileId),
+                            onLongPress: () => _toggleMediaSelection(f),
+                            onTap: () {
+                              if (_mediaSelectionMode) {
+                                _toggleMediaSelection(f);
+                                return;
+                              }
+                              Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) =>
+                                      MediaViewerScreen(file: f, files: recent),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 26, 18, 4),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Arquivos',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${filteredFiles.length}',
+                    style: TextStyle(color: TCloudTheme.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          ),
           SliverToBoxAdapter(
             child: SizedBox(
-              height: 48,
+              height: 52,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 18,
-                  vertical: 4,
+                  vertical: 6,
                 ),
                 children: [
                   for (final filter in const ['Todos', 'Fotos', 'Vídeos'])
@@ -4035,55 +4126,47 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               ),
             ),
           ),
-          if (recent.isEmpty)
-            SliverToBoxAdapter(
+          if (filteredFiles.isEmpty)
+            const SliverToBoxAdapter(
               child: Padding(
-                padding: EdgeInsets.fromLTRB(18, 8, 18, 130),
-                child: Text(
-                  'Nenhum arquivo encontrado neste filtro.',
-                  style: TextStyle(color: TCloudTheme.textSecondary),
-                ),
+                padding: EdgeInsets.fromLTRB(18, 16, 18, 130),
+                child: Text('Nenhum arquivo encontrado neste filtro.'),
               ),
             )
           else
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 250,
-                child: PageView.builder(
-                  controller: _recentCarouselController,
-                  padEnds: false,
-                  itemCount: recent.length,
-                  itemBuilder: (_, i) {
-                    final f = recent[i];
-                    return Padding(
-                      padding: EdgeInsets.only(left: i == 0 ? 18 : 5, right: 5),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: _HomeThumbnail(
-                          key: ValueKey<String>(
-                            'home-media:${f.chatId}:${f.messageThreadId}:${f.messageId}:${f.fileId}',
-                          ),
-                          file: f,
-                          repo: _repo,
-                          selected: _selectedMediaIds.contains(f.fileId),
-                          onLongPress: () => _toggleMediaSelection(f),
-                          onTap: () {
-                            if (_mediaSelectionMode) {
-                              _toggleMediaSelection(f);
-                              return;
-                            }
-                            Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) =>
-                                    MediaViewerScreen(file: f, files: recent),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    );
-                  },
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 130),
+              sliver: SliverGrid.builder(
+                itemCount: filteredFiles.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  crossAxisSpacing: 6,
+                  mainAxisSpacing: 10,
+                  childAspectRatio: .78,
                 ),
+                itemBuilder: (context, index) {
+                  final file = filteredFiles[index];
+                  return _HomeFileGridTile(
+                    file: file,
+                    repo: _repo,
+                    selected: _selectedMediaIds.contains(file.fileId),
+                    onLongPress: () => _toggleMediaSelection(file),
+                    onTap: () {
+                      if (_mediaSelectionMode) {
+                        _toggleMediaSelection(file);
+                        return;
+                      }
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => MediaViewerScreen(
+                            file: file,
+                            files: filteredFiles,
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
               ),
             ),
         ],
@@ -5469,6 +5552,67 @@ class _DriveEmptyState extends StatelessWidget {
             message,
             textAlign: TextAlign.center,
             style: TextStyle(color: TCloudTheme.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeFileGridTile extends StatelessWidget {
+  const _HomeFileGridTile({
+    required this.file,
+    required this.repo,
+    required this.selected,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final TCloudFile file;
+  final TCloudRepository repo;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: TCloudTheme.surface,
+      borderRadius: BorderRadius.circular(8),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: _HomeThumbnail(
+              file: file,
+              repo: repo,
+              selected: selected,
+              onTap: onTap,
+              onLongPress: onLongPress,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(9, 8, 9, 2),
+            child: Text(
+              file.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(9, 0, 9, 8),
+            child: Text(
+              file.isImage
+                  ? 'Foto'
+                  : file.isVideo
+                  ? 'Vídeo'
+                  : file.kind,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 10, color: TCloudTheme.textSecondary),
+            ),
           ),
         ],
       ),
