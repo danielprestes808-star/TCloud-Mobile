@@ -92,10 +92,14 @@ class TCloudDeviceAuth {
         Uri.parse('$coreBaseUrl/api/v1/profile'),
       );
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $value');
-      final response = await request.close();
+      final response = await request.close().timeout(
+        const Duration(seconds: 12),
+      );
       final body = await utf8.decoder.bind(response).join();
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
       return (jsonDecode(body) as Map).cast<String, dynamic>();
+    } catch (_) {
+      return null;
     } finally {
       client.close(force: true);
     }
@@ -179,12 +183,12 @@ class TCloudDeviceAuth {
                       ? 'TCloud Mobile'
                       : Platform.localHostname,
                   'platform': 'android',
-                  'appVersion': '1.1.24',
+                  'appVersion': '1.1.25',
                 },
         ),
       );
       final response = await request.close().timeout(
-        const Duration(seconds: 12),
+        const Duration(seconds: 30),
       );
       final body = await utf8.decoder.bind(response).join();
       final decoded = body.isEmpty ? <String, dynamic>{} : jsonDecode(body);
@@ -227,7 +231,7 @@ class TCloudDeviceAuth {
               ? 'TCloud Mobile'
               : Platform.localHostname,
           'platform': 'android',
-          'appVersion': '1.1.24',
+          'appVersion': '1.1.25',
         }),
       );
       final response = await request.close().timeout(

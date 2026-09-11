@@ -66,11 +66,13 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   String _folderQuery = '';
   bool _filesGrid = false;
   String _filesFilter = 'Todos';
+  String _homeFilesFilter = 'Todos';
   bool _showMediaSearch = false;
   String _mediaQuery = '';
 
   List<TCloudFolder> _folders = <TCloudFolder>[];
   List<TCloudFile> _media = <TCloudFile>[];
+  List<TCloudFile> _allFiles = <TCloudFile>[];
   List<TCloudFile> _offline = <TCloudFile>[];
   Set<String> _favorites = <String>{};
   Set<String> _trash = <String>{};
@@ -383,15 +385,15 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     for (final f in requested) {
       uniqueFolders.putIfAbsent(f.cacheKey, () => f);
     }
-    final folders = _selectedFolderKey == 'all'
-        ? uniqueFolders.values.take(8).toList()
-        : uniqueFolders.values.toList();
+    final folders = uniqueFolders.values.toList();
     final allFolders = _selectedFolderKey == 'all';
     final collected = <String, TCloudFile>{};
+    final allCollected = <String, TCloudFile>{};
 
     void collect(Iterable<TCloudFile> files) {
-      for (final file in files.where((item) => item.isMedia)) {
-        collected[file.contentIdentity] = file;
+      for (final file in files) {
+        allCollected[file.contentIdentity] = file;
+        if (file.isMedia) collected[file.contentIdentity] = file;
       }
     }
 
@@ -402,23 +404,35 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
           final d = b.createdAt.compareTo(a.createdAt);
           return d != 0 ? d : b.messageId.compareTo(a.messageId);
         });
-      setState(() => _media = sorted.take(allFolders ? 36 : 120).toList());
+      final allSorted = allCollected.values.toList()
+        ..sort((a, b) {
+          final d = b.createdAt.compareTo(a.createdAt);
+          return d != 0 ? d : b.messageId.compareTo(a.messageId);
+        });
+      setState(() {
+        _media = sorted.take(allFolders ? 120 : 160).toList();
+        _allFiles = allSorted.take(allFolders ? 240 : 160).toList();
+      });
     }
 
     // Mostra primeiro o catálogo local. A rede atualiza cada bloco depois,
     // sem manter a grade vazia durante várias consultas ao Telegram.
-    final cachedPages = await Future.wait(
-      folders.map(_repo.loadCachedFilePage),
-    );
-    if (generation != _mediaLoadGeneration) return;
-    for (final page in cachedPages) {
-      collect(page.files);
+    for (var offset = 0; offset < folders.length; offset += 16) {
+      final end = (offset + 16).clamp(0, folders.length);
+      final cachedPages = await Future.wait(
+        folders.sublist(offset, end).map(_repo.loadCachedFilePage),
+      );
+      if (generation != _mediaLoadGeneration) return;
+      for (final page in cachedPages) {
+        collect(page.files);
+      }
+      publish();
     }
-    publish();
 
-    for (var offset = 0; offset < folders.length; offset += 4) {
-      final end = (offset + 4).clamp(0, folders.length);
-      final batch = folders.sublist(offset, end);
+    final liveFolders = allFolders ? folders.take(12).toList() : folders;
+    for (var offset = 0; offset < liveFolders.length; offset += 4) {
+      final end = (offset + 4).clamp(0, liveFolders.length);
+      final batch = liveFolders.sublist(offset, end);
       final pages = await Future.wait(
         batch.map((folder) async {
           // TCLOUD_EXISTING_MEDIA_LIVE_REFRESH_1046
@@ -3196,7 +3210,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                           ),
                           SizedBox(height: 3),
                           Text(
-                            'Android • versão 1.1.13',
+                            'Android • versão 1.1.25',
                             style: TextStyle(color: TCloudTheme.textSecondary),
                           ),
                         ],
@@ -3552,7 +3566,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               '${folder.chatId}:${folder.messageThreadId != 0 ? folder.messageThreadId : folder.forumTopicId}',
         )
         .toSet();
-    final recent = _media
+    final recent = _allFiles
         .where(
           (file) =>
               (_deviceSpace == 'all' ||
@@ -3562,9 +3576,14 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               !_trash.contains(file.contentIdentity) &&
               (q.isEmpty ||
                   file.name.toLowerCase().contains(q) ||
-                  file.kind.toLowerCase().contains(q)),
+                  file.kind.toLowerCase().contains(q)) &&
+              switch (_homeFilesFilter) {
+                'Fotos' => file.isImage,
+                'Vídeos' => file.isVideo,
+                _ => true,
+              },
         )
-        .take(18)
+        .take(30)
         .toList();
 
     return RefreshIndicator(
@@ -3971,12 +3990,49 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 ),
               ),
             ),
-          const SliverToBoxAdapter(
+          SliverToBoxAdapter(
             child: Padding(
-              padding: EdgeInsets.fromLTRB(18, 24, 18, 10),
-              child: Text(
-                'Recentes',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              padding: const EdgeInsets.fromLTRB(18, 24, 18, 10),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Todos os arquivos',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${recent.length}',
+                    style: TextStyle(color: TCloudTheme.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 48,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 4,
+                ),
+                children: [
+                  for (final filter in const ['Todos', 'Fotos', 'Vídeos'])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: FilterChip(
+                        label: Text(filter),
+                        selected: _homeFilesFilter == filter,
+                        onSelected: (_) =>
+                            setState(() => _homeFilesFilter = filter),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -3985,7 +4041,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               child: Padding(
                 padding: EdgeInsets.fromLTRB(18, 8, 18, 130),
                 child: Text(
-                  'As fotos e videos recentes aparecerao aqui.',
+                  'Nenhum arquivo encontrado neste filtro.',
                   style: TextStyle(color: TCloudTheme.textSecondary),
                 ),
               ),
@@ -4053,7 +4109,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
           (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
         );
 
-    final visibleFiles = _media.where((file) {
+    final visibleFiles = _allFiles.where((file) {
       final trashed = _trash.contains(file.contentIdentity);
       final matchesQuery =
           query.isEmpty ||
@@ -5613,15 +5669,21 @@ class _HomeThumbnailState extends State<_HomeThumbnail> {
       );
     }
 
+    final extension = widget.file.name.split('.').last.toLowerCase();
+    final icon = widget.file.isVideo
+        ? Icons.movie_outlined
+        : widget.file.isImage
+        ? Icons.image_outlined
+        : extension == 'pdf'
+        ? Icons.picture_as_pdf_outlined
+        : const {'mp3', 'wav', 'm4a', 'ogg', 'flac'}.contains(extension)
+        ? Icons.audio_file_outlined
+        : const {'zip', 'rar', '7z', 'tar', 'gz'}.contains(extension)
+        ? Icons.folder_zip_outlined
+        : Icons.insert_drive_file_outlined;
     return ColoredBox(
       color: TCloudTheme.surfaceSoft,
-      child: Center(
-        child: Icon(
-          widget.file.isVideo ? Icons.movie_outlined : Icons.image_outlined,
-          color: TCloudTheme.primary,
-          size: 34,
-        ),
-      ),
+      child: Center(child: Icon(icon, color: TCloudTheme.primary, size: 34)),
     );
   }
 }

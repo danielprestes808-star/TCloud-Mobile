@@ -61,37 +61,85 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _prepareProfile() async {
-    final account = await AccountService.instance.activeAccount();
+    var account = await AccountService.instance.activeAccount();
+    if (!account.profileComplete) {
+      final remote = await TCloudDeviceAuth.instance.profile();
+      final remoteName = remote?['displayName']?.toString() ?? '';
+      final remoteUsername = remote?['username']?.toString() ?? '';
+      if (remote?['profileComplete'] == true) {
+        try {
+          account = await AccountService.instance.saveProfile(
+            remoteName,
+            remoteUsername,
+          );
+        } catch (_) {}
+      }
+    }
     if (!mounted) return;
     _nameController.text = account.displayName ?? '';
     _usernameController.text = account.username ?? '';
     if (account.profileComplete) {
-      try {
-        await TCloudDeviceAuth.instance.register(displayName: account.displayName!, username: account.username!);
-        if (!mounted) return;
-        setState(() { _profileReady = true; _busy = true; });
-        await _initialize();
-      } catch (error) {
-        if (!mounted) return;
-        setState(() { _profileReady = false; _busy = false; _error = error.toString().replaceFirst('Bad state: ', ''); });
-      }
+      setState(() {
+        _profileReady = true;
+        _busy = true;
+      });
+      unawaited(_syncProfileWithCore(account));
+      await _initialize();
     } else {
-      setState(() { _profileReady = false; _busy = false; });
+      setState(() {
+        _profileReady = false;
+        _busy = false;
+      });
     }
   }
 
   Future<void> _saveProfile() async {
-    setState(() { _busy = true; _error = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
-      final profile = await AccountService.instance.saveProfile(_nameController.text, _usernameController.text);
-      await TCloudDeviceAuth.instance.register(displayName: profile.displayName!, username: profile.username!);
+      final profile = await AccountService.instance.saveProfile(
+        _nameController.text,
+        _usernameController.text,
+      );
       if (!mounted) return;
-      setState(() { _profileReady = true; });
+      setState(() {
+        _profileReady = true;
+      });
+      unawaited(_syncProfileWithCore(profile));
       await _initialize();
     } catch (error) {
       if (!mounted) return;
-      setState(() { _busy = false; _error = error.toString().replaceFirst('Bad state: ', ''); });
+      setState(() {
+        _busy = false;
+        _error = error.toString().replaceFirst('Bad state: ', '');
+      });
     }
+  }
+
+  Future<void> _syncProfileWithCore(TCloudAccount profile) async {
+    Object? lastFailure;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await TCloudDeviceAuth.instance.register(
+          displayName: profile.displayName!,
+          username: profile.username!,
+        );
+        return;
+      } catch (failure) {
+        lastFailure = failure;
+        await Future<void>.delayed(Duration(seconds: 2 << attempt));
+      }
+    }
+    if (!mounted || lastFailure == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Seu perfil foi salvo neste aparelho. A conexão com a nuvem será tentada novamente.',
+        ),
+      ),
+    );
   }
 
   Future<void> _initialize() async {
@@ -545,20 +593,70 @@ class _LoginScreenState extends State<LoginScreen> {
         body: SafeArea(
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(24, 42, 24, 28),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              const Icon(Icons.cloud_outlined, size: 58),
-              const SizedBox(height: 28),
-              Text('Crie seu perfil', style: Theme.of(context).textTheme.headlineMedium, textAlign: TextAlign.center),
-              const SizedBox(height: 8),
-              const Text('Ele identifica você no TCloud e nos compartilhamentos.', textAlign: TextAlign.center),
-              const SizedBox(height: 28),
-              TextField(controller: _nameController, textCapitalization: TextCapitalization.words, autofillHints: const [AutofillHints.name], decoration: const InputDecoration(labelText: 'Seu nome', prefixIcon: Icon(Icons.person_outline))),
-              const SizedBox(height: 14),
-              TextField(controller: _usernameController, autocorrect: false, enableSuggestions: false, inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_]')), LengthLimitingTextInputFormatter(32)], decoration: const InputDecoration(labelText: 'Nome de usuário', prefixText: '@', prefixIcon: Icon(Icons.alternate_email), helperText: 'De 3 a 32 letras, números ou _.')),
-              if (_error != null) Padding(padding: const EdgeInsets.only(top: 14), child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
-              const SizedBox(height: 22),
-              FilledButton.icon(onPressed: _busy ? null : _saveProfile, icon: _busy ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.arrow_forward), label: const Text('Continuar com o Telegram')),
-            ]),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Icon(Icons.cloud_outlined, size: 58),
+                const SizedBox(height: 28),
+                Text(
+                  'Crie seu perfil',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Ele identifica você no TCloud e nos compartilhamentos.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 28),
+                TextField(
+                  controller: _nameController,
+                  textCapitalization: TextCapitalization.words,
+                  autofillHints: const [AutofillHints.name],
+                  decoration: const InputDecoration(
+                    labelText: 'Seu nome',
+                    prefixIcon: Icon(Icons.person_outline),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _usernameController,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_]')),
+                    LengthLimitingTextInputFormatter(32),
+                  ],
+                  decoration: const InputDecoration(
+                    labelText: 'Nome de usuário',
+                    prefixText: '@',
+                    prefixIcon: Icon(Icons.alternate_email),
+                    helperText: 'De 3 a 32 letras, números ou _.',
+                  ),
+                ),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 14),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 22),
+                FilledButton.icon(
+                  onPressed: _busy ? null : _saveProfile,
+                  icon: _busy
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.arrow_forward),
+                  label: const Text('Continuar com o Telegram'),
+                ),
+              ],
+            ),
           ),
         ),
       );
