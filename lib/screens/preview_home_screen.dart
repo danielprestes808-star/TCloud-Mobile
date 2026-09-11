@@ -71,6 +71,9 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   String _homeFilesSort = 'Mais recentes';
   int _homeGridColumns = 3;
   bool _hideHomePreviews = false;
+  String _homeDateFilter = 'Qualquer data';
+  String _homeSizeFilter = 'Qualquer tamanho';
+  List<String> _homeSearchHistory = <String>[];
   Set<String> _resumableVideoIds = <String>{};
   bool _showMediaSearch = false;
   String _mediaQuery = '';
@@ -319,6 +322,8 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
       _homeFilesSort =
           prefs.getString('tcloud:home-files-sort') ?? 'Mais recentes';
       _hideHomePreviews = prefs.getBool('tcloud:hide-home-previews') ?? false;
+      _homeSearchHistory =
+          prefs.getStringList('tcloud:home-search-history') ?? <String>[];
       _resumableVideoIds = resumable;
     });
   }
@@ -339,6 +344,100 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     setState(() => _hideHomePreviews = !_hideHomePreviews);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('tcloud:hide-home-previews', _hideHomePreviews);
+  }
+
+  Future<void> _rememberHomeSearch(String value) async {
+    final clean = value.trim();
+    if (clean.length < 2) return;
+    final next = <String>[
+      clean,
+      ..._homeSearchHistory.where(
+        (item) => item.toLowerCase() != clean.toLowerCase(),
+      ),
+    ].take(6).toList();
+    setState(() => _homeSearchHistory = next);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('tcloud:home-search-history', next);
+  }
+
+  Future<void> _showHomeSearchFilters() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          void update(VoidCallback change) {
+            setState(change);
+            setSheetState(() {});
+          }
+
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Refinar pesquisa',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 18),
+                  const Text('PERÍODO'),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final value in const [
+                        'Qualquer data',
+                        'Hoje',
+                        'Últimos 7 dias',
+                        'Últimos 30 dias',
+                        'Este ano',
+                      ])
+                        ChoiceChip(
+                          label: Text(value),
+                          selected: _homeDateFilter == value,
+                          onSelected: (_) =>
+                              update(() => _homeDateFilter = value),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('TAMANHO'),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final value in const [
+                        'Qualquer tamanho',
+                        'Até 10 MB',
+                        '10 a 100 MB',
+                        'Mais de 100 MB',
+                      ])
+                        ChoiceChip(
+                          label: Text(value),
+                          selected: _homeSizeFilter == value,
+                          onSelected: (_) =>
+                              update(() => _homeSizeFilter = value),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(sheetContext),
+                      child: const Text('Aplicar filtros'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -3309,7 +3408,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                           ),
                           SizedBox(height: 3),
                           Text(
-                            'Android • versão 1.1.28',
+                            'Android • versão 1.1.29',
                             style: TextStyle(color: TCloudTheme.textSecondary),
                           ),
                         ],
@@ -3673,7 +3772,38 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         !_trash.contains(file.contentIdentity) &&
         (q.isEmpty ||
             file.name.toLowerCase().contains(q) ||
-            file.kind.toLowerCase().contains(q));
+            file.kind.toLowerCase().contains(q) ||
+            (file.mimeType?.toLowerCase().contains(q) ?? false) ||
+            file.name.split('.').last.toLowerCase() == q);
+
+    bool matchesAdvancedSearch(TCloudFile file) {
+      final now = DateTime.now();
+      final created = file.createdAt > 0
+          ? DateTime.fromMillisecondsSinceEpoch(file.createdAt * 1000).toLocal()
+          : null;
+      final dateMatches = switch (_homeDateFilter) {
+        'Hoje' =>
+          created != null &&
+              created.year == now.year &&
+              created.month == now.month &&
+              created.day == now.day,
+        'Últimos 7 dias' =>
+          created != null && now.difference(created).inDays <= 7,
+        'Últimos 30 dias' =>
+          created != null && now.difference(created).inDays <= 30,
+        'Este ano' => created != null && created.year == now.year,
+        _ => true,
+      };
+      const mb = 1024 * 1024;
+      final sizeMatches = switch (_homeSizeFilter) {
+        'Até 10 MB' => file.size <= 10 * mb,
+        '10 a 100 MB' => file.size > 10 * mb && file.size <= 100 * mb,
+        'Mais de 100 MB' => file.size > 100 * mb,
+        _ => true,
+      };
+      return dateMatches && sizeMatches;
+    }
+
     final recent = _media.where(isVisible).take(12).toList();
     _recentCarouselItemCount = recent.length;
     final duplicateKeys = <String, int>{};
@@ -3683,7 +3813,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     }
     final filteredFiles =
         _allFiles.where((file) {
-          if (!isVisible(file)) return false;
+          if (!isVisible(file) || !matchesAdvancedSearch(file)) return false;
           return switch (_homeFilesFilter) {
             'Fotos' => file.isImage,
             'Vídeos' => file.isVideo,
@@ -3796,6 +3926,16 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                     hintText: 'Pesquisar no TCloud',
                     leading: const Icon(Icons.search_rounded),
                     trailing: [
+                      IconButton(
+                        tooltip: 'Filtrar por data e tamanho',
+                        onPressed: _showHomeSearchFilters,
+                        icon: Badge(
+                          isLabelVisible:
+                              _homeDateFilter != 'Qualquer data' ||
+                              _homeSizeFilter != 'Qualquer tamanho',
+                          child: const Icon(Icons.tune_rounded),
+                        ),
+                      ),
                       if (_folderQuery.isNotEmpty)
                         IconButton(
                           tooltip: 'Limpar busca',
@@ -3809,7 +3949,31 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                     onChanged: (value) => setState(() {
                       _folderQuery = value.trim();
                     }),
+                    onSubmitted: _rememberHomeSearch,
                   ),
+                  if (_folderQuery.isEmpty &&
+                      _homeSearchHistory.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      height: 34,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _homeSearchHistory.length,
+                        separatorBuilder: (_, _) => const SizedBox(width: 7),
+                        itemBuilder: (_, index) {
+                          final value = _homeSearchHistory[index];
+                          return ActionChip(
+                            avatar: const Icon(Icons.history_rounded, size: 16),
+                            label: Text(value),
+                            onPressed: () {
+                              _folderSearchController.text = value;
+                              setState(() => _folderQuery = value);
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Row(
                     children: [
