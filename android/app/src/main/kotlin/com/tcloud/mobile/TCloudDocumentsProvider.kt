@@ -11,6 +11,8 @@ import android.provider.DocumentsContract.Root
 import android.provider.DocumentsProvider
 import android.util.Base64
 import android.webkit.MimeTypeMap
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 
 /** Makes locally available TCloud files visible in Android's system file picker. */
@@ -23,6 +25,9 @@ class TCloudDocumentsProvider : DocumentsProvider() {
         "documents" to "Documentos",
         "other" to "Outros arquivos",
     )
+    private data class FileMetadata(val name: String, val mimeType: String?)
+    @Volatile private var metadataLoadedAt = 0L
+    @Volatile private var metadataByPath = emptyMap<String, FileMetadata>()
 
     private fun categoryId(key: String) = "category:$key"
 
@@ -96,7 +101,7 @@ class TCloudDocumentsProvider : DocumentsProvider() {
             val key = documentId.removePrefix("category:")
             categories[key]?.let { addDocument(cursor, null, documentId, it) }
         }
-        else resolve(documentId)?.let { addDocument(cursor, it, documentId, it.name) }
+        else resolve(documentId)?.let { addDocument(cursor, it, documentId, displayName(it)) }
         return cursor
     }
 
@@ -111,12 +116,12 @@ class TCloudDocumentsProvider : DocumentsProvider() {
             localFiles().filter { categoryFor(it) == key }
                 .sortedByDescending { it.lastModified() }
                 .take(1000)
-                .forEach { addDocument(cursor, it, id(it), it.name) }
+                .forEach { addDocument(cursor, it, id(it), displayName(it)) }
         } else {
             resolve(parentDocumentId)?.takeIf { it.isDirectory }?.listFiles()
                 ?.sortedWith(compareByDescending<File> { it.isDirectory }.thenBy { it.name.lowercase() })
                 ?.filter(::visible)
-                ?.take(1000)?.forEach { addDocument(cursor, it, id(it), it.name) }
+                ?.take(1000)?.forEach { addDocument(cursor, it, id(it), displayName(it)) }
         }
         return cursor
     }
@@ -126,9 +131,9 @@ class TCloudDocumentsProvider : DocumentsProvider() {
         val needle = query.trim().lowercase()
         roots().forEach { root ->
             root.walkTopDown().maxDepth(8).filter {
-                it.isFile && visible(it) && it.name.lowercase().contains(needle)
+                it.isFile && visible(it) && displayName(it).lowercase().contains(needle)
             }
-                .take(200).forEach { addDocument(cursor, it, id(it), it.name) }
+                .take(200).forEach { addDocument(cursor, it, id(it), displayName(it)) }
         }
         return cursor
     }
@@ -138,7 +143,7 @@ class TCloudDocumentsProvider : DocumentsProvider() {
         localFiles()
             .sortedByDescending { it.lastModified() }
             .take(64)
-            .forEach { addDocument(cursor, it, id(it), it.name) }
+            .forEach { addDocument(cursor, it, id(it), displayName(it)) }
         return cursor
     }
 
@@ -176,8 +181,50 @@ class TCloudDocumentsProvider : DocumentsProvider() {
     }
 
     private fun mime(file: File): String {
+        metadata()[file.canonicalPath]?.mimeType?.takeIf { it.isNotBlank() }?.let { return it }
         return MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
             ?: "application/octet-stream"
+    }
+
+    private fun displayName(file: File): String {
+        return metadata()[file.canonicalPath]?.name?.takeIf { it.isNotBlank() } ?: file.name
+    }
+
+    private fun metadata(): Map<String, FileMetadata> {
+        val now = System.currentTimeMillis()
+        if (now - metadataLoadedAt < 2_000L) return metadataByPath
+        val context = context ?: return emptyMap()
+        val raw = context.getSharedPreferences("FlutterSharedPreferences", 0)
+            .all["flutter.tcloud_offline_files_v2"]
+        val entries: List<String> = when (raw) {
+            is Set<*> -> raw.mapNotNull { it?.toString() }
+            is String -> try {
+                val array = JSONArray(raw)
+                (0 until array.length()).map { array.optString(it) }
+            } catch (_: Throwable) {
+                emptyList()
+            }
+            else -> emptyList()
+        }
+        val loaded = buildMap {
+            entries.forEach { encoded ->
+                try {
+                    val item = JSONObject(encoded)
+                    val path = item.optString("localPath").trim()
+                    val name = item.optString("name").trim()
+                    if (path.isNotEmpty() && name.isNotEmpty()) {
+                        put(
+                            File(path).canonicalPath,
+                            FileMetadata(name, item.optString("mimeType").takeIf { it.isNotBlank() }),
+                        )
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+        }
+        metadataByPath = loaded
+        metadataLoadedAt = now
+        return loaded
     }
 
     private fun categoryFor(file: File): String {
