@@ -18,7 +18,7 @@ flutter run
 - Cada origem mantém seu próprio cursor, evitando repetição ou perda de páginas antigas.
 - O primeiro carregamento válido é armazenado em cache; falhas transitórias não apagam arquivos já descobertos.
 
-Versão atual: **1.1.1+82**.
+Versão atual: **1.1.38+119**.
 
 Para gerar um APK que atualize tanto as instalacoes debug antigas quanto as
 releases oficiais, execute primeiro `flutter build apk --release` e depois

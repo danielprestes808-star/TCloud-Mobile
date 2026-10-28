@@ -32,6 +32,7 @@ import '../services/app_update_service.dart';
 import 'folder_screen.dart';
 import 'gallery_folders_screen.dart';
 import 'integrity_center_screen.dart';
+import 'storage_management_screen.dart';
 import '../services/media_cache_policy.dart';
 import '../services/library_preferences_service.dart';
 import '../services/tcloud_device_auth.dart';
@@ -4026,6 +4027,21 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                   },
                 ),
               ],
+            ]),
+            section('ARMAZENAMENTO E CACHE', [
+              ListTile(
+                leading: const Icon(Icons.storage_rounded),
+                title: const Text('Armazenamento e cache'),
+                subtitle: const Text(
+                  'Verifique o uso de disco, miniaturas e limpe temporários.',
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const StorageManagementScreen(),
+                  ),
+                ),
+              ),
             ]),
             section('SUPORTE AVANÇADO', [
               ListTile(
