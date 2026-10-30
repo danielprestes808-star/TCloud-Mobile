@@ -268,8 +268,8 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
                     Expanded(
                       child: Text(
                         'O reconhecimento é processado localmente. Ao iniciar, '
-                          'o app mostra a quantidade e o tamanho estimado das '
-                          'fotos na nuvem antes de baixá-las para análise. '
+                        'o app mostra a quantidade e o tamanho estimado das '
+                        'fotos na nuvem antes de baixá-las para análise. '
                         'Confira os grupos automáticos antes de compartilhar.',
                         style: TextStyle(fontSize: 12),
                       ),
@@ -299,8 +299,7 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
                   ),
                   if (!_loadingAlbum)
                     TextButton(
-                      onPressed: () =>
-                          setState(() => _cancelRequested = true),
+                      onPressed: () => setState(() => _cancelRequested = true),
                       child: const Text('Cancelar análise'),
                     ),
                 ],
