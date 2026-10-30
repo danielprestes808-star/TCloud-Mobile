@@ -30,8 +30,12 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
   bool _loading = true;
   bool _scanning = false;
   bool _loadingAlbum = false;
+  bool _cancelRequested = false;
+  String _currentPhase = 'Preparando análise';
   int _completed = 0;
+  int _currentItem = 0;
   int _total = 0;
+  int _localImageCount = 0;
   String? _error;
 
   List<TCloudFile> get _images => _files.where((file) => file.isImage).toList();
@@ -66,36 +70,26 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
     }
   }
 
-  Future<void> _analyze() async {
-    final confirmed =
-        await showDialog<bool>(
-          context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Agrupar por rosto?'),
-            content: Text(
-              'O TCloud vai carregar a lista completa deste álbum e analisar '
-              'localmente somente imagens já baixadas. Mídias que estão apenas '
-              'na nuvem não serão baixadas.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Cancelar'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Analisar'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-    if (!confirmed || !mounted) return;
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) return '0 MB';
+    const units = <String>['B', 'KB', 'MB', 'GB', 'TB'];
+    var value = bytes.toDouble();
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
+    return '${value.toStringAsFixed(value >= 10 ? 0 : 1)} ${units[unit]}';
+  }
 
+  Future<void> _analyze() async {
     setState(() {
       _scanning = true;
       _loadingAlbum = true;
+      _cancelRequested = false;
+      _currentPhase = 'Preparando análise';
       _completed = 0;
+      _currentItem = 0;
       _total = 0;
       _error = null;
     });
@@ -103,13 +97,86 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
     try {
       final files = await widget.loadAllFiles();
       if (!mounted) return;
+      final images = files.where((file) => file.isImage).toList();
+      var localImageCount = 0;
+      var cloudBytes = 0;
+      for (final file in images) {
+        final path = file.localPath?.trim() ?? '';
+        if (path.isNotEmpty && await File(path).exists()) {
+          localImageCount++;
+        } else {
+          cloudBytes += file.size > 0 ? file.size : 0;
+        }
+      }
+
+      if (!mounted) return;
       setState(() {
         _files = files;
         _loadingAlbum = false;
-        _total = _downloadedImageCount;
+        _localImageCount = localImageCount;
+        _total = images.length;
       });
+
+      final confirmed =
+          await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              icon: const Icon(Icons.face_retouching_natural_outlined),
+              title: const Text('Analisar rostos deste álbum?'),
+              content: Text(
+                '${images.length} imagens no álbum. '
+                '$localImageCount já estão neste aparelho; '
+                '${images.length - localImageCount} precisam ser baixadas '
+                'temporariamente (${_formatBytes(cloudBytes)} estimados).\n\n'
+                'A análise é feita no aparelho e não envia fotos para um '
+                'serviço de reconhecimento. O app remove os downloads '
+                'temporários do cache ao concluir; se a limpeza falhar, '
+                'avisa quais arquivos precisam de atenção. O tamanho real '
+                'pode variar. Recomendamos usar Wi-Fi.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Agora não'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(
+                    images.length == localImageCount
+                        ? 'Analisar'
+                        : 'Baixar e analisar',
+                  ),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!confirmed || !mounted) {
+        if (mounted) setState(() => _scanning = false);
+        return;
+      }
+      if (images.isEmpty) {
+        setState(() {
+          _scanning = false;
+          _cancelRequested = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Este álbum não contém imagens.')),
+        );
+        return;
+      }
+
       final result = await _service.analyze(
         _files,
+        shouldCancel: () => _cancelRequested,
+        onStatus: (phase, current, total) {
+          if (!mounted) return;
+          setState(() {
+            _currentPhase = phase;
+            _currentItem = current;
+            _total = total;
+          });
+        },
         onProgress: (completed, total) {
           if (!mounted) return;
           setState(() {
@@ -123,11 +190,21 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
         _groups = result.groups;
         _scanning = false;
         _loadingAlbum = false;
+        _cancelRequested = false;
       });
+      if (result.cancelled) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Análise interrompida após a imagem em andamento.'),
+          ),
+        );
+        return;
+      }
       final details = <String>[
         '${result.groups.length} grupo(s) de pessoas',
-        if (result.notAvailableLocallyCount > 0)
-          '${result.notAvailableLocallyCount} imagem(ns) não disponíveis no aparelho',
+        if (result.failedFiles.isNotEmpty)
+          '${result.failedFiles.length} falha(s): '
+              '${result.failedFiles.take(2).join('; ')}',
         if (result.unmatchedCount > 0)
           '${result.unmatchedCount} imagem(ns) sem pessoa identificada',
       ];
@@ -139,6 +216,7 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
       setState(() {
         _scanning = false;
         _loadingAlbum = false;
+        _cancelRequested = false;
         _error = 'Não foi possível analisar as imagens: $error';
       });
     }
@@ -189,9 +267,9 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
                     SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'O reconhecimento é processado localmente. '
-                        'Só imagens já baixadas deste álbum são analisadas; '
-                        'arquivos na nuvem não são baixados automaticamente. '
+                        'O reconhecimento é processado localmente. Ao iniciar, '
+                          'o app mostra a quantidade e o tamanho estimado das '
+                          'fotos na nuvem antes de baixá-las para análise. '
                         'Confira os grupos automáticos antes de compartilhar.',
                         style: TextStyle(fontSize: 12),
                       ),
@@ -206,18 +284,25 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: Column(
                 children: [
-                  if (_loadingAlbum)
-                    const LinearProgressIndicator()
-                  else
-                    LinearProgressIndicator(
-                      value: _total == 0 ? null : _completed / _total,
-                    ),
+                  const LinearProgressIndicator(),
                   const SizedBox(height: 6),
                   Text(
                     _loadingAlbum
                         ? 'Carregando os itens do álbum'
-                        : 'Analisando $_completed de $_total imagens',
+                        : _cancelRequested
+                        ? 'A análise será interrompida após a imagem atual'
+                        : _currentItem == 0
+                        ? _currentPhase
+                        : '$_currentPhase imagem $_currentItem de $_total '
+                              '· $_completed concluída(s) · '
+                              '$_localImageCount já local(is)',
                   ),
+                  if (!_loadingAlbum)
+                    TextButton(
+                      onPressed: () =>
+                          setState(() => _cancelRequested = true),
+                      child: const Text('Cancelar análise'),
+                    ),
                 ],
               ),
             ),
@@ -285,9 +370,10 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              downloaded == 0
-                  ? 'Baixe imagens deste álbum e inicie a análise facial.'
-                  : '$downloaded imagem(ns) baixada(s) pronta(s) para análise.',
+              _images.isEmpty
+                  ? 'Este álbum ainda não contém imagens para analisar.'
+                  : '${_images.length} imagem(ns) no álbum. '
+                        '$downloaded já está(ão) neste aparelho.',
               textAlign: TextAlign.center,
               style: TextStyle(color: TCloudTheme.textSecondary),
             ),
@@ -316,7 +402,8 @@ class _FaceGroupCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final path = group.files.isEmpty ? null : group.files.first.localPath;
+    final firstFile = group.files.isEmpty ? null : group.files.first;
+    final path = firstFile?.localPath ?? firstFile?.thumbnailLocalPath;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -593,7 +680,7 @@ class _FacePersonScreenState extends State<_FacePersonScreen> {
               itemBuilder: (context, index) {
                 final file = _group.files[index];
                 final selected = _selectedFiles.contains(file.contentIdentity);
-                final path = file.localPath;
+                final path = file.localPath ?? file.thumbnailLocalPath;
                 return Semantics(
                   button: true,
                   selected: selected,

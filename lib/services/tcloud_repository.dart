@@ -17,7 +17,129 @@ class _ResolvedMediaCacheEntry {
   final TCloudFile file;
 }
 
+class TCloudTemporaryMediaDownload {
+  const TCloudTemporaryMediaDownload({
+    required this.path,
+    required this.release,
+  });
+
+  final String path;
+  final Future<void> Function() release;
+}
+
 class TCloudRepository {
+  Future<TCloudTemporaryMediaDownload> downloadForTemporaryAnalysis(
+    TCloudFile file,
+  ) async {
+    final current = await resolveCurrentMedia(file);
+    if (current.fileId > 0) {
+      final existing = await _td.execute('GetFile', <String, dynamic>{
+        'fileId': current.fileId,
+      });
+      if (existing['_type']?.toString() != 'Error') {
+        final local = _asMap(existing['local']);
+        final existingPath = local['path']?.toString().trim() ?? '';
+        if (local['isDownloadingCompleted'] == true &&
+            existingPath.isNotEmpty &&
+            await File(existingPath).exists()) {
+          return TCloudTemporaryMediaDownload(
+            path: existingPath,
+            release: () async {},
+          );
+        }
+      }
+    }
+
+    if (current.fileId <= 0) {
+      final canonicalId = current.coreFileId?.trim() ?? '';
+      if (canonicalId.isEmpty) {
+        throw StateError(
+          'A imagem não possui uma referência válida para download.',
+        );
+      }
+
+      final directory = await Directory.systemTemp.createTemp(
+        'tcloud_face_media_',
+      );
+      final safeName = current.name
+          .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+          .trim();
+      final path =
+          '${directory.path}${Platform.pathSeparator}${safeName.isEmpty ? 'image' : safeName}';
+      try {
+        final downloadedPath = await _canonicalOps.downloadMedia(
+          canonicalId,
+          path,
+          expectedSize: current.size,
+        );
+        return TCloudTemporaryMediaDownload(
+          path: downloadedPath,
+          release: () async {
+            if (await directory.exists()) {
+              await directory.delete(recursive: true);
+            }
+          },
+        );
+      } catch (_) {
+        if (await directory.exists()) {
+          await directory.delete(recursive: true);
+        }
+        rethrow;
+      }
+    }
+
+    var target = current;
+    var response = await _td.execute('DownloadFile', <String, dynamic>{
+      'fileId': target.fileId,
+      'priority': 16,
+      'offset': 0,
+      'limit': 0,
+      'synchronous': true,
+    });
+
+    if (response['_type']?.toString() == 'Error') {
+      target = await refreshCurrentMedia(file);
+      if (target.fileId > 0) {
+        response = await _td.execute('DownloadFile', <String, dynamic>{
+          'fileId': target.fileId,
+          'priority': 16,
+          'offset': 0,
+          'limit': 0,
+          'synchronous': true,
+        });
+      }
+    }
+
+    if (response['_type']?.toString() == 'Error') {
+      throw StateError(
+        response['message']?.toString() ?? 'Não foi possível baixar a imagem.',
+      );
+    }
+
+    final local = _asMap(response['local']);
+    final path = local['path']?.toString().trim() ?? '';
+    if (local['isDownloadingCompleted'] != true ||
+        path.isEmpty ||
+        !await File(path).exists()) {
+      throw StateError('O download temporário da imagem não foi concluído.');
+    }
+
+    return TCloudTemporaryMediaDownload(
+      path: path,
+      release: () async {
+        final deleted = await _td.execute('DeleteFile', <String, dynamic>{
+          'fileId': target.fileId,
+        });
+        if (deleted['_type']?.toString() == 'Error') {
+          throw StateError(
+            deleted['message']?.toString() ??
+                'Não foi possível remover a imagem do cache temporário.',
+          );
+        }
+      },
+    );
+  }
+
   Future<String> validateDownloadedFilePath(
     TCloudFile file,
     String path,

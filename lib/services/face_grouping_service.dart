@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../models/tcloud_file.dart';
+import 'tcloud_repository.dart';
 
 class FaceGroup {
   const FaceGroup({required this.id, required this.name, required this.files});
@@ -21,14 +22,16 @@ class FaceScanResult {
   const FaceScanResult({
     required this.groups,
     required this.scannedCount,
-    required this.notAvailableLocallyCount,
+    required this.failedFiles,
     required this.unmatchedCount,
+    required this.cancelled,
   });
 
   final List<FaceGroup> groups;
   final int scannedCount;
-  final int notAvailableLocallyCount;
+  final List<String> failedFiles;
   final int unmatchedCount;
+  final bool cancelled;
 }
 
 class _FaceIndex {
@@ -66,26 +69,31 @@ class FaceGroupingService {
   Future<FaceScanResult> analyze(
     List<TCloudFile> files, {
     required void Function(int completed, int total) onProgress,
+    void Function(String phase, int current, int total)? onStatus,
+    bool Function()? shouldCancel,
   }) async {
     final images = files.where((file) => file.isImage).toList();
-    final localImages = <TCloudFile>[];
-    for (final file in images) {
-      final path = file.localPath?.trim() ?? '';
-      if (file.downloaded && path.isNotEmpty && await File(path).exists()) {
-        localImages.add(file);
-      }
-    }
-
     final index = await _readIndex();
     final associations = index.associations;
     final names = index.names;
     final aliases = index.aliases;
-    if (localImages.isEmpty) {
+    if (images.isEmpty) {
       return FaceScanResult(
         groups: _groupsFor(files, associations, names, aliases),
         scannedCount: 0,
-        notAvailableLocallyCount: images.length,
+        failedFiles: const [],
         unmatchedCount: 0,
+        cancelled: false,
+      );
+    }
+
+    if (shouldCancel?.call() == true) {
+      return FaceScanResult(
+        groups: _groupsFor(files, associations, names, aliases),
+        scannedCount: 0,
+        failedFiles: const [],
+        unmatchedCount: 0,
+        cancelled: true,
       );
     }
 
@@ -99,61 +107,109 @@ class FaceGroupingService {
       ),
     );
     final unmatchedIdentities = <String>{};
+    final failedFiles = <String>[];
+    var cancelled = false;
+    var scannedCount = 0;
     final cropDirectory = await Directory.systemTemp.createTemp(
       'tcloud_face_scan_',
     );
 
     try {
-      for (var index = 0; index < localImages.length; index++) {
-        final file = localImages[index];
-        final path = file.localPath!;
+      for (var index = 0; index < images.length; index++) {
+        if (shouldCancel?.call() == true) {
+          cancelled = true;
+          break;
+        }
+        final file = images[index];
         final identity = file.contentIdentity;
-        final faces = await detector.processImage(
-          InputImage.fromFilePath(path),
+        final localPath = file.localPath?.trim() ?? '';
+        final alreadyLocal =
+            localPath.isNotEmpty && await File(localPath).exists();
+        TCloudTemporaryMediaDownload? temporary;
+        onStatus?.call(
+          alreadyLocal ? 'Analisando' : 'Baixando',
+          index + 1,
+          images.length,
         );
-        if (faces.isEmpty) {
-          unmatchedIdentities.add(identity);
-        } else {
-          final bytes = await File(path).readAsBytes();
-          final decoded = img.decodeImage(bytes);
-          if (decoded == null) {
-            throw FormatException(
-              'Formato de imagem nao suportado: ${file.name}',
-            );
-          }
-          final oriented = img.bakeOrientation(decoded);
-          final people = associations.putIfAbsent(identity, () => <String>{});
-
-          for (var faceIndex = 0; faceIndex < faces.length; faceIndex++) {
-            final cropped = _cropFace(oriented, faces[faceIndex]);
-            final cropFile = File(
-              p.join(cropDirectory.path, 'face_${index}_$faceIndex.jpg'),
-            );
-            await cropFile.writeAsBytes(img.encodeJpg(cropped, quality: 92));
-
-            var personId = await FaceVerification.instance.verifyFromImagePath(
-              imagePath: cropFile.path,
-              threshold: _threshold,
-            );
-            if (personId == null) {
-              personId =
-                  'person_${DateTime.now().microsecondsSinceEpoch}_${index}_$faceIndex';
-              final name = 'Pessoa ${names.length + 1}';
-              await FaceVerification.instance.registerFromImagePath(
-                id: personId,
-                imagePath: cropFile.path,
-                imageId: '${identity}_$faceIndex',
-                name: name,
-              );
-              names[personId] = name;
+        try {
+          try {
+            temporary = alreadyLocal
+                ? null
+                : await TCloudRepository.instance.downloadForTemporaryAnalysis(
+                    file,
+                  );
+            if (!alreadyLocal) {
+              onStatus?.call('Analisando', index + 1, images.length);
             }
-            people.add(_resolveAlias(personId, aliases));
-            await cropFile.delete();
+            final path = temporary?.path ?? localPath;
+            final faces = await detector.processImage(
+              InputImage.fromFilePath(path),
+            );
+            final people = <String>{};
+            if (faces.isEmpty) {
+              unmatchedIdentities.add(identity);
+            } else {
+              final bytes = await File(path).readAsBytes();
+              final decoded = img.decodeImage(bytes);
+              if (decoded == null) {
+                throw FormatException(
+                  'Formato de imagem nao suportado: ${file.name}',
+                );
+              }
+              final oriented = img.bakeOrientation(decoded);
+
+              for (var faceIndex = 0; faceIndex < faces.length; faceIndex++) {
+                final cropped = _cropFace(oriented, faces[faceIndex]);
+                final cropFile = File(
+                  p.join(cropDirectory.path, 'face_${index}_$faceIndex.jpg'),
+                );
+                await cropFile.writeAsBytes(
+                  img.encodeJpg(cropped, quality: 92),
+                );
+
+                var personId = await FaceVerification.instance
+                    .verifyFromImagePath(
+                      imagePath: cropFile.path,
+                      threshold: _threshold,
+                    );
+                if (personId == null) {
+                  personId =
+                      'person_${DateTime.now().microsecondsSinceEpoch}_${index}_$faceIndex';
+                  final name = 'Pessoa ${names.length + 1}';
+                  await FaceVerification.instance.registerFromImagePath(
+                    id: personId,
+                    imagePath: cropFile.path,
+                    imageId: '${identity}_$faceIndex',
+                    name: name,
+                  );
+                  names[personId] = name;
+                }
+                people.add(_resolveAlias(personId, aliases));
+                await cropFile.delete();
+              }
+              unmatchedIdentities.remove(identity);
+            }
+            if (people.isEmpty) {
+              associations.remove(identity);
+            } else {
+              associations[identity] = people;
+            }
+            scannedCount++;
+          } on Object catch (error) {
+            failedFiles.add('${file.name}: ${error.runtimeType}');
           }
-          unmatchedIdentities.remove(identity);
+        } finally {
+          try {
+            await temporary?.release();
+          } on Object catch (error) {
+            failedFiles.add(
+              '${file.name}: falha ao limpar arquivo temporário '
+              '(${error.runtimeType})',
+            );
+          }
         }
 
-        onProgress(index + 1, localImages.length);
+        onProgress(index + 1, images.length);
       }
     } finally {
       try {
@@ -169,9 +225,10 @@ class FaceGroupingService {
 
     return FaceScanResult(
       groups: _groupsFor(files, associations, names, aliases),
-      scannedCount: localImages.length,
-      notAvailableLocallyCount: images.length - localImages.length,
+      scannedCount: scannedCount,
+      failedFiles: failedFiles,
       unmatchedCount: unmatchedIdentities.length,
+      cancelled: cancelled,
     );
   }
 

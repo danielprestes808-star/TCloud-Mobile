@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile/models/tcloud_file.dart';
+import 'package:mobile/screens/face_groups_screen.dart';
 import 'package:mobile/services/face_grouping_service.dart';
 
 void main() {
@@ -86,6 +88,48 @@ void main() {
     final bruno = groups.singleWhere((group) => group.id == 'person_b');
     expect(ana.files.map((file) => file.messageId), <int>[2]);
     expect(bruno.files.map((file) => file.messageId), <int>[1]);
+  });
+
+  test(
+    'cancel requested before scanning does not initialize face detection',
+    () async {
+      final result = await service.analyze(
+        <TCloudFile>[_file(1)],
+        onProgress: (_, _) {},
+        shouldCancel: () => true,
+      );
+
+      expect(result.cancelled, isTrue);
+      expect(result.scannedCount, 0);
+      expect(result.failedFiles, isEmpty);
+    },
+  );
+
+  testWidgets('remote photos require confirmation with a transfer estimate', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FaceGroupsScreen(
+          folderTitle: 'Camera',
+          files: <TCloudFile>[_file(1)],
+          loadAllFiles: () async => <TCloudFile>[_file(1)],
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.byTooltip('Analisar rostos'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.textContaining('100 B estimados'), findsOneWidget);
+    expect(find.text('Baixar e analisar'), findsOneWidget);
+
+    await tester.tap(find.text('Agora não'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Analisar rostos deste álbum?'), findsNothing);
   });
 }
 

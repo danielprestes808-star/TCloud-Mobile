@@ -4221,6 +4221,16 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         )
         .take(10)
         .toList();
+    final cataloguedBytes = _allFiles.fold<int>(
+      0,
+      (total, file) => total + file.size,
+    );
+    final offlineIdentities = _offline
+        .map((file) => file.contentIdentity)
+        .toSet();
+    final offlineCataloguedBytes = _allFiles
+        .where((file) => offlineIdentities.contains(file.contentIdentity))
+        .fold<int>(0, (total, file) => total + file.size);
     _homeVisibleFileIds = filteredFiles.map((file) => file.fileId).toSet();
 
     String dateGroup(TCloudFile file) {
@@ -4434,9 +4444,12 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 child: Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: TCloudTheme.surface,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: TCloudTheme.border),
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF2868D7), Color(0xFF2699C6)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(18),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -4447,12 +4460,12 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                             width: 48,
                             height: 48,
                             decoration: BoxDecoration(
-                              color: TCloudTheme.primary.withValues(alpha: .12),
+                              color: Colors.white.withValues(alpha: .16),
                               borderRadius: BorderRadius.circular(7),
                             ),
                             child: Icon(
                               Icons.cloud_done_rounded,
-                              color: TCloudTheme.primary,
+                              color: Colors.white,
                               size: 27,
                             ),
                           ),
@@ -4463,16 +4476,15 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                               children: [
                                 Text(
                                   'Seu TCloud',
-                                  style: TextStyle(
+                                  style: const TextStyle(
+                                    color: Colors.white,
                                     fontWeight: FontWeight.w900,
                                     fontSize: 18,
                                   ),
                                 ),
-                                Text(
+                                const Text(
                                   'Arquivos protegidos e disponíveis',
-                                  style: TextStyle(
-                                    color: TCloudTheme.textSecondary,
-                                  ),
+                                  style: TextStyle(color: Colors.white70),
                                 ),
                               ],
                             ),
@@ -4485,11 +4497,13 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                           _LibraryMetric(
                             value: '${_folders.length}',
                             label: _folders.length == 1 ? 'pasta' : 'pastas',
+                            light: true,
                           ),
                           const SizedBox(width: 28),
                           _LibraryMetric(
                             value: '${_media.length}',
                             label: _media.length == 1 ? 'mídia' : 'mídias',
+                            light: true,
                           ),
                           const Spacer(),
                           IconButton.filledTonal(
@@ -4498,22 +4512,62 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                                 ? null
                                 : () => _runGallerySync(),
                             style: IconButton.styleFrom(
-                              backgroundColor: TCloudTheme.primary.withValues(
-                                alpha: .10,
+                              backgroundColor: Colors.white.withValues(
+                                alpha: .18,
                               ),
-                              foregroundColor: TCloudTheme.primary,
+                              foregroundColor: Colors.white,
                             ),
                             icon: _syncingGallery
                                 ? SizedBox.square(
                                     dimension: 18,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
-                                      color: TCloudTheme.primary,
+                                      color: Colors.white,
                                     ),
                                   )
                                 : const Icon(Icons.sync_rounded),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Biblioteca catalogada',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          ),
+                          Text(
+                            _humanSize(cataloguedBytes),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 7),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: LinearProgressIndicator(
+                          value: cataloguedBytes == 0
+                              ? 0
+                              : (offlineCataloguedBytes / cataloguedBytes)
+                                    .clamp(0.0, 1.0),
+                          minHeight: 7,
+                          backgroundColor: Colors.white.withValues(alpha: .25),
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '${_humanSize(offlineCataloguedBytes)} disponível offline · '
+                        'total do catálogo, não representa cota da conta',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),
@@ -6174,10 +6228,15 @@ class _DeviceSpaceCard extends StatelessWidget {
 }
 
 class _LibraryMetric extends StatelessWidget {
-  const _LibraryMetric({required this.value, required this.label});
+  const _LibraryMetric({
+    required this.value,
+    required this.label,
+    this.light = false,
+  });
 
   final String value;
   final String label;
+  final bool light;
 
   @override
   Widget build(BuildContext context) {
@@ -6187,7 +6246,7 @@ class _LibraryMetric extends StatelessWidget {
         Text(
           value,
           style: TextStyle(
-            color: TCloudTheme.textPrimary,
+            color: light ? Colors.white : TCloudTheme.textPrimary,
             fontSize: 24,
             height: 1,
             fontWeight: FontWeight.w900,
@@ -6197,7 +6256,7 @@ class _LibraryMetric extends StatelessWidget {
         Text(
           label,
           style: TextStyle(
-            color: TCloudTheme.textSecondary,
+            color: light ? Colors.white70 : TCloudTheme.textSecondary,
             fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
