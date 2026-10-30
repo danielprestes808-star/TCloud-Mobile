@@ -5499,8 +5499,8 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 },
               )
             : NavigationBar(
-                  selectedIndex: _selectedNavigationIndex,
-                  onDestinationSelected: _selectNavigationDestination,
+                selectedIndex: _selectedNavigationIndex,
+                onDestinationSelected: _selectNavigationDestination,
                 destinations: const [
                   NavigationDestination(
                     icon: Icon(Icons.home_outlined),
