@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../core/tcloud_theme.dart';
 import '../models/tcloud_file.dart';
 import '../services/face_grouping_service.dart';
+import '../services/thumbnail_cache_service.dart';
 import 'media_viewer_screen.dart';
 
 class FaceGroupsScreen extends StatefulWidget {
@@ -13,11 +14,25 @@ class FaceGroupsScreen extends StatefulWidget {
     required this.folderTitle,
     required this.files,
     required this.loadAllFiles,
+    this.scanScope,
+    this.loadLibraryOnOpen = false,
   });
+
+  const FaceGroupsScreen.library({super.key})
+    : folderTitle = 'Toda a biblioteca',
+      files = const <TCloudFile>[],
+      loadAllFiles = _loadAllLibraryFiles,
+      scanScope = 'library',
+      loadLibraryOnOpen = true;
+
+  static Future<List<TCloudFile>> _loadAllLibraryFiles() =>
+      FaceGroupingService.instance.loadAllLibraryMedia();
 
   final String folderTitle;
   final List<TCloudFile> files;
   final Future<List<TCloudFile>> Function() loadAllFiles;
+  final String? scanScope;
+  final bool loadLibraryOnOpen;
 
   @override
   State<FaceGroupsScreen> createState() => _FaceGroupsScreenState();
@@ -31,6 +46,9 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
   bool _scanning = false;
   bool _loadingAlbum = false;
   bool _cancelRequested = false;
+  bool _pauseRequested = false;
+  bool _pendingScan = false;
+  bool _loadedFullLibrary = false;
   String _currentPhase = 'Preparando análise';
   int _completed = 0;
   int _currentItem = 0;
@@ -39,12 +57,54 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
   String? _error;
 
   List<TCloudFile> get _images => _files.where((file) => file.isImage).toList();
+  List<TCloudFile> get _videos => _files.where((file) => file.isVideo).toList();
+  String get _scanScope => widget.scanScope ?? widget.folderTitle;
 
-  int get _downloadedImageCount => _images
+  int get _downloadedMediaCount => <TCloudFile>[..._images, ..._videos]
       .where(
         (file) => file.downloaded && file.localPath?.trim().isNotEmpty == true,
       )
       .length;
+
+  Future<void> _clearFaceData() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Apagar dados de rostos?'),
+        content: const Text(
+          'Os grupos, nomes e dados de reconhecimento serão removidos deste '
+          'aparelho. As fotos e vídeos originais não serão apagados.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Apagar dados'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await _service.clearAllFaceData();
+      if (!mounted) return;
+      setState(() {
+        _groups = const [];
+        _pendingScan = false;
+        _error = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Dados de rostos apagados do aparelho.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = 'Não foi possível apagar os dados: $error');
+    }
+  }
 
   @override
   void initState() {
@@ -54,10 +114,17 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
 
   Future<void> _loadGroups() async {
     try {
-      final groups = await _service.groupsFor(_files);
+      final files = widget.loadLibraryOnOpen && !_loadedFullLibrary
+          ? await widget.loadAllFiles()
+          : _files;
+      final groups = await _service.groupsFor(files);
+      final pendingScan = await _service.hasPendingScan(_scanScope);
       if (!mounted) return;
       setState(() {
+        _files = files;
+        _loadedFullLibrary = widget.loadLibraryOnOpen;
         _groups = groups;
+        _pendingScan = pendingScan;
         _loading = false;
         _error = null;
       });
@@ -87,6 +154,7 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
       _scanning = true;
       _loadingAlbum = true;
       _cancelRequested = false;
+      _pauseRequested = false;
       _currentPhase = 'Preparando análise';
       _completed = 0;
       _currentItem = 0;
@@ -95,15 +163,21 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
     });
 
     try {
-      final files = await widget.loadAllFiles();
+      final files = widget.loadLibraryOnOpen && _loadedFullLibrary
+          ? _files
+          : await widget.loadAllFiles();
       if (!mounted) return;
-      final images = files.where((file) => file.isImage).toList();
-      var localImageCount = 0;
+      final media = files
+          .where((file) => file.isImage || file.isVideo)
+          .toList();
+      final images = media.where((file) => file.isImage).length;
+      final videos = media.where((file) => file.isVideo).length;
+      var localMediaCount = 0;
       var cloudBytes = 0;
-      for (final file in images) {
+      for (final file in media) {
         final path = file.localPath?.trim() ?? '';
         if (path.isNotEmpty && await File(path).exists()) {
-          localImageCount++;
+          localMediaCount++;
         } else {
           cloudBytes += file.size > 0 ? file.size : 0;
         }
@@ -112,9 +186,10 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
       if (!mounted) return;
       setState(() {
         _files = files;
+        _loadedFullLibrary = widget.loadLibraryOnOpen;
         _loadingAlbum = false;
-        _localImageCount = localImageCount;
-        _total = images.length;
+        _localImageCount = localMediaCount;
+        _total = media.length;
       });
 
       final confirmed =
@@ -122,14 +197,20 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
             context: context,
             builder: (dialogContext) => AlertDialog(
               icon: const Icon(Icons.face_retouching_natural_outlined),
-              title: const Text('Analisar rostos deste álbum?'),
+              title: Text(
+                widget.loadLibraryOnOpen
+                    ? 'Analisar rostos da biblioteca?'
+                    : 'Analisar rostos deste álbum?',
+              ),
               content: Text(
-                '${images.length} imagens no álbum. '
-                '$localImageCount já estão neste aparelho; '
-                '${images.length - localImageCount} precisam ser baixadas '
+                '$images fotos e $videos vídeos. '
+                '$localMediaCount itens já estão neste aparelho; '
+                '${media.length - localMediaCount} precisam ser baixados '
                 'temporariamente (${_formatBytes(cloudBytes)} estimados).\n\n'
-                'A análise é feita no aparelho e não envia fotos para um '
-                'serviço de reconhecimento. O app remove os downloads '
+                'Nos vídeos, são analisados quadros espaçados por cerca de '
+                '10 segundos, até 12 por vídeo. A análise é feita no aparelho '
+                'e não envia mídia para um serviço de reconhecimento. O app '
+                'remove os downloads '
                 'temporários do cache ao concluir; se a limpeza falhar, '
                 'avisa quais arquivos precisam de atenção. O tamanho real '
                 'pode variar. Recomendamos usar Wi-Fi.',
@@ -142,9 +223,11 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
                 FilledButton(
                   onPressed: () => Navigator.pop(dialogContext, true),
                   child: Text(
-                    images.length == localImageCount
-                        ? 'Analisar'
-                        : 'Baixar e analisar',
+                    media.length == localMediaCount
+                        ? (_pendingScan ? 'Continuar análise' : 'Analisar')
+                        : (_pendingScan
+                              ? 'Baixar e continuar'
+                              : 'Baixar e analisar'),
                   ),
                 ),
               ],
@@ -155,20 +238,25 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
         if (mounted) setState(() => _scanning = false);
         return;
       }
-      if (images.isEmpty) {
+      if (media.isEmpty) {
         setState(() {
           _scanning = false;
           _cancelRequested = false;
+          _pauseRequested = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Este álbum não contém imagens.')),
+          const SnackBar(
+            content: Text('Este álbum não contém fotos ou vídeos.'),
+          ),
         );
         return;
       }
 
       final result = await _service.analyze(
         _files,
+        scanScope: _scanScope,
         shouldCancel: () => _cancelRequested,
+        shouldPause: () => _pauseRequested,
         onStatus: (phase, current, total) {
           if (!mounted) return;
           setState(() {
@@ -186,12 +274,25 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
         },
       );
       if (!mounted) return;
+      final pendingScan =
+          result.paused || await _service.hasPendingScan(_scanScope);
+      if (!mounted) return;
       setState(() {
         _groups = result.groups;
         _scanning = false;
         _loadingAlbum = false;
         _cancelRequested = false;
+        _pauseRequested = false;
+        _pendingScan = pendingScan;
       });
+      if (result.paused) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Análise pausada. Você pode continuar depois.'),
+          ),
+        );
+        return;
+      }
       if (result.cancelled) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -206,17 +307,21 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
           '${result.failedFiles.length} falha(s): '
               '${result.failedFiles.take(2).join('; ')}',
         if (result.unmatchedCount > 0)
-          '${result.unmatchedCount} imagem(ns) sem pessoa identificada',
+          '${result.unmatchedCount} item(ns) sem pessoa identificada',
       ];
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(details.join(' • '))));
     } catch (error) {
       if (!mounted) return;
+      final pendingScan = await _service.hasPendingScan(_scanScope);
+      if (!mounted) return;
       setState(() {
         _scanning = false;
         _loadingAlbum = false;
         _cancelRequested = false;
+        _pauseRequested = false;
+        _pendingScan = pendingScan;
         _error = 'Não foi possível analisar as imagens: $error';
       });
     }
@@ -247,6 +352,18 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
             onPressed: _scanning ? null : _analyze,
             icon: const Icon(Icons.face_retouching_natural_outlined),
           ),
+          PopupMenuButton<String>(
+            tooltip: 'Privacidade',
+            onSelected: (action) {
+              if (action == 'delete') _clearFaceData();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'delete',
+                child: Text('Apagar dados de rostos'),
+              ),
+            ],
+          ),
         ],
       ),
       body: Column(
@@ -268,9 +385,8 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
                     Expanded(
                       child: Text(
                         'O reconhecimento é processado localmente. Ao iniciar, '
-                        'o app mostra a quantidade e o tamanho estimado das '
-                        'fotos na nuvem antes de baixá-las para análise. '
-                        'Confira os grupos automáticos antes de compartilhar.',
+                        'o app pede sua confirmação antes de baixar itens da '
+                        'nuvem. Revise os grupos antes de compartilhar.',
                         style: TextStyle(fontSize: 12),
                       ),
                     ),
@@ -284,23 +400,45 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: Column(
                 children: [
-                  const LinearProgressIndicator(),
+                  if (_loadingAlbum)
+                    const LinearProgressIndicator()
+                  else
+                    const LinearProgressIndicator(),
                   const SizedBox(height: 6),
                   Text(
                     _loadingAlbum
-                        ? 'Carregando os itens do álbum'
+                        ? widget.loadLibraryOnOpen
+                              ? 'Carregando a biblioteca'
+                              : 'Carregando os itens do álbum'
+                        : _pauseRequested
+                        ? 'A análise será pausada após o item atual'
                         : _cancelRequested
-                        ? 'A análise será interrompida após a imagem atual'
+                        ? 'A análise será interrompida após o item atual'
                         : _currentItem == 0
                         ? _currentPhase
-                        : '$_currentPhase imagem $_currentItem de $_total '
+                        : '$_currentPhase item $_currentItem de $_total '
                               '· $_completed concluída(s) · '
                               '$_localImageCount já local(is)',
                   ),
                   if (!_loadingAlbum)
-                    TextButton(
-                      onPressed: () => setState(() => _cancelRequested = true),
-                      child: const Text('Cancelar análise'),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        TextButton(
+                          onPressed: () => setState(() {
+                            _pauseRequested = true;
+                            _cancelRequested = false;
+                          }),
+                          child: const Text('Pausar'),
+                        ),
+                        TextButton(
+                          onPressed: () => setState(() {
+                            _cancelRequested = true;
+                            _pauseRequested = false;
+                          }),
+                          child: const Text('Cancelar'),
+                        ),
+                      ],
                     ),
                 ],
               ),
@@ -350,7 +488,8 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
   }
 
   Widget _emptyState() {
-    final downloaded = _downloadedImageCount;
+    final mediaCount = _images.length + _videos.length;
+    final downloaded = _downloadedMediaCount;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(28),
@@ -369,9 +508,9 @@ class _FaceGroupsScreenState extends State<FaceGroupsScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              _images.isEmpty
-                  ? 'Este álbum ainda não contém imagens para analisar.'
-                  : '${_images.length} imagem(ns) no álbum. '
+              mediaCount == 0
+                  ? 'Este álbum ainda não contém fotos ou vídeos para analisar.'
+                  : '$mediaCount foto(s) e vídeo(s) no álbum. '
                         '$downloaded já está(ão) neste aparelho.',
               textAlign: TextAlign.center,
               style: TextStyle(color: TCloudTheme.textSecondary),
@@ -402,7 +541,6 @@ class _FaceGroupCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final firstFile = group.files.isEmpty ? null : group.files.first;
-    final path = firstFile?.localPath ?? firstFile?.thumbnailLocalPath;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -411,13 +549,14 @@ class _FaceGroupCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(
-              child: path == null
+              child: firstFile == null
                   ? const Icon(Icons.person_outline_rounded, size: 54)
-                  : Image.file(
-                      File(path),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) =>
-                          const Icon(Icons.person_outline_rounded, size: 54),
+                  : _FaceMediaThumbnail(
+                      file: firstFile,
+                      fallback: const Icon(
+                        Icons.person_outline_rounded,
+                        size: 54,
+                      ),
                     ),
             ),
             Padding(
@@ -432,18 +571,65 @@ class _FaceGroupCard extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   Text(
-                    '${group.files.length} foto(s)',
+                    '${group.files.length} item(ns)',
                     style: TextStyle(
                       color: TCloudTheme.textSecondary,
                       fontSize: 12,
                     ),
                   ),
+                  if (group.needsReview)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Text(
+                        'Confira este grupo',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.tertiary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _FaceMediaThumbnail extends StatelessWidget {
+  const _FaceMediaThumbnail({required this.file, required this.fallback});
+
+  final TCloudFile file;
+  final Widget fallback;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = file.isVideo
+        ? file.thumbnailLocalPath
+        : file.localPath ?? file.thumbnailLocalPath;
+    if (path != null && path.isNotEmpty) {
+      return Image.file(
+        File(path),
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => fallback,
+      );
+    }
+    if (!file.isVideo) return fallback;
+
+    return FutureBuilder<String?>(
+      future: ThumbnailCacheService.instance.fullPreviewPath(file),
+      builder: (context, snapshot) {
+        final previewPath = snapshot.data;
+        if (previewPath == null || previewPath.isEmpty) return fallback;
+        return Image.file(
+          File(previewPath),
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => fallback,
+        );
+      },
     );
   }
 }
@@ -552,6 +738,81 @@ class _FacePersonScreenState extends State<_FacePersonScreen> {
     }
   }
 
+  Future<void> _moveSelectedToPerson() async {
+    final candidates = widget.groups
+        .where((group) => group.id != _group.id)
+        .toList();
+    if (candidates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Não há outra pessoa neste álbum.')),
+      );
+      return;
+    }
+
+    final destination = await showModalBottomSheet<FaceGroup>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (context) => ListView(
+        shrinkWrap: true,
+        children: [
+          const ListTile(
+            title: Text('Mover para outra pessoa'),
+            subtitle: Text('Os arquivos originais não serão alterados.'),
+          ),
+          ...candidates.map(
+            (group) => ListTile(
+              leading: const Icon(Icons.face_outlined),
+              title: Text(group.name),
+              subtitle: Text('${group.files.length} itens'),
+              onTap: () => Navigator.pop(context, group),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (destination == null || !mounted) return;
+
+    try {
+      await widget.service.moveFilesToGroup(
+        _group.id,
+        destination.id,
+        _selectedFiles,
+      );
+      final groups = await widget.service.groupsFor(_group.files);
+      if (!mounted) return;
+      final updated = groups.where((group) => group.id == _group.id);
+      if (updated.isEmpty) {
+        Navigator.pop(context);
+        return;
+      }
+      setState(() {
+        _group = updated.first;
+        _selectedFiles.clear();
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Não foi possível mover os itens: $error')),
+      );
+    }
+  }
+
+  Future<void> _confirmReview() async {
+    try {
+      await widget.service.confirmGroupReviewed(_group.id);
+      final groups = await widget.service.groupsFor(_group.files);
+      if (!mounted) return;
+      final updated = groups.where((group) => group.id == _group.id);
+      if (updated.isNotEmpty) setState(() => _group = updated.first);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Não foi possível atualizar o grupo: $error')),
+      );
+    }
+  }
+
   Future<void> _removeSelectedFromGroup() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -625,23 +886,35 @@ class _FacePersonScreenState extends State<_FacePersonScreen> {
             : null,
         title: Text(
           _selectionMode
-              ? '${_selectedFiles.length} selecionada(s)'
+              ? '${_selectedFiles.length} selecionado(s)'
               : _group.name,
         ),
         actions: [
+          if (_selectionMode)
+            IconButton(
+              tooltip: 'Mover para outra pessoa',
+              onPressed: _moveSelectedToPerson,
+              icon: const Icon(Icons.drive_file_move_outline),
+            ),
           if (!_selectionMode)
             PopupMenuButton<String>(
               tooltip: 'Ações do grupo',
               onSelected: (action) {
                 if (action == 'merge') _mergeWithAnotherGroup();
                 if (action == 'rename') _rename();
+                if (action == 'review') _confirmReview();
               },
-              itemBuilder: (_) => const [
+              itemBuilder: (_) => [
+                if (_group.needsReview)
+                  const PopupMenuItem(
+                    value: 'review',
+                    child: Text('Marcar como revisado'),
+                  ),
                 PopupMenuItem(
                   value: 'merge',
                   child: Text('Combinar com outra pessoa'),
                 ),
-                PopupMenuItem(value: 'rename', child: Text('Renomear')),
+                const PopupMenuItem(value: 'rename', child: Text('Renomear')),
               ],
             ),
         ],
@@ -660,8 +933,8 @@ class _FacePersonScreenState extends State<_FacePersonScreen> {
                   const SizedBox(width: 10),
                   const Expanded(
                     child: Text(
-                      'Mantenha uma foto pressionada para selecionar e '
-                      'separá-la deste grupo.',
+                      'Toque e segure um item para separar ou mover para '
+                      'outra pessoa.',
                     ),
                   ),
                 ],
@@ -679,13 +952,12 @@ class _FacePersonScreenState extends State<_FacePersonScreen> {
               itemBuilder: (context, index) {
                 final file = _group.files[index];
                 final selected = _selectedFiles.contains(file.contentIdentity);
-                final path = file.localPath ?? file.thumbnailLocalPath;
                 return Semantics(
                   button: true,
                   selected: selected,
                   label: selected
-                      ? 'Foto selecionada: ${file.name}'
-                      : 'Foto: ${file.name}',
+                      ? 'Item selecionado: ${file.name}'
+                      : 'Item: ${file.name}',
                   child: InkWell(
                     onTap: () => _selectionMode
                         ? _toggleSelection(file)
@@ -694,15 +966,12 @@ class _FacePersonScreenState extends State<_FacePersonScreen> {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        if (path == null)
-                          const Icon(Icons.image_not_supported_outlined)
-                        else
-                          Image.file(
-                            File(path),
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) =>
-                                const Icon(Icons.image_not_supported_outlined),
+                        _FaceMediaThumbnail(
+                          file: file,
+                          fallback: const Icon(
+                            Icons.image_not_supported_outlined,
                           ),
+                        ),
                         if (selected)
                           ColoredBox(
                             color: Theme.of(
@@ -745,7 +1014,7 @@ class _FacePersonScreenState extends State<_FacePersonScreen> {
               child: FilledButton.icon(
                 onPressed: _removeSelectedFromGroup,
                 icon: const Icon(Icons.person_remove_alt_1_outlined),
-                label: Text('Separar ${_selectedFiles.length} foto(s)'),
+                label: Text('Separar ${_selectedFiles.length} item(ns)'),
               ),
             )
           : null,

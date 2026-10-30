@@ -933,55 +933,59 @@ class _FolderScreenState extends State<FolderScreen> {
   Widget _listItem(TCloudFile file) {
     final selected = _selectedFileIds.contains(file.fileId);
 
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      clipBehavior: Clip.antiAlias,
-      child: ListTile(
-        minTileHeight: 72,
-        selected: selected,
-        selectedTileColor: TCloudTheme.primary.withValues(alpha: .10),
-        leading: _MediaThumbnail(
-          key: ValueKey<String>(
-            'media:${file.chatId}:${file.messageThreadId}:${file.messageId}:${file.fileId}',
+    return Column(
+      children: [
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+          minTileHeight: 72,
+          selected: selected,
+          selectedTileColor: TCloudTheme.primary.withValues(alpha: .10),
+          leading: _MediaThumbnail(
+            key: ValueKey<String>(
+              'media:${file.chatId}:${file.messageThreadId}:${file.messageId}:${file.fileId}',
+            ),
+            file: file,
+            repo: _repo,
+            width: 50,
+            height: 50,
+            icon: _icon(file),
+            showPlay: file.isVideo,
           ),
-          file: file,
-          repo: _repo,
-          width: 54,
-          height: 54,
-          icon: _icon(file),
-          showPlay: file.isVideo,
+          title: Text(
+            file.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          subtitle: Text('${_kindLabel(file)} \u2022 ${_size(file.size)}'),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                file.downloaded ? Icons.offline_pin : Icons.cloud_outlined,
+                color: file.downloaded
+                    ? Colors.green
+                    : TCloudTheme.textSecondary,
+                size: 20,
+              ),
+              IconButton(
+                tooltip: 'Opções do arquivo ${file.name}',
+                onPressed: () => _showFileMenu(file),
+                icon: const Icon(Icons.more_vert_rounded),
+              ),
+            ],
+          ),
+          onLongPress: () => _toggleSelection(file),
+          onTap: () {
+            if (_selectionMode) {
+              _toggleSelection(file);
+            } else {
+              _open(file);
+            }
+          },
         ),
-        title: Text(
-          file.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-        subtitle: Text('${_size(file.size)} \u2022 ${_kindLabel(file)}'),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              file.downloaded ? Icons.offline_pin : Icons.cloud_outlined,
-              color: file.downloaded ? Colors.green : TCloudTheme.textSecondary,
-              size: 20,
-            ),
-            IconButton(
-              tooltip: 'Mais opções',
-              onPressed: () => _showFileMenu(file),
-              icon: const Icon(Icons.more_vert_rounded),
-            ),
-          ],
-        ),
-        onLongPress: () => _toggleSelection(file),
-        onTap: () {
-          if (_selectionMode) {
-            _toggleSelection(file);
-          } else {
-            _open(file);
-          }
-        },
-      ),
+        const Divider(height: 1, indent: 80),
+      ],
     );
   }
 
@@ -1171,6 +1175,7 @@ class _FolderScreenState extends State<FolderScreen> {
                       MaterialPageRoute<void>(
                         builder: (_) => FaceGroupsScreen(
                           folderTitle: widget.folder.title,
+                          scanScope: widget.folder.cacheKey,
                           files: List<TCloudFile>.unmodifiable(_files),
                           loadAllFiles: _loadAllFilesForFaceGroups,
                         ),

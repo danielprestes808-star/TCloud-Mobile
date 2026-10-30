@@ -88,6 +88,69 @@ void main() {
     final bruno = groups.singleWhere((group) => group.id == 'person_b');
     expect(ana.files.map((file) => file.messageId), <int>[2]);
     expect(bruno.files.map((file) => file.messageId), <int>[1]);
+
+    final storedIndex =
+        jsonDecode(
+              await File(
+                '${documentsDirectory.path}${Platform.pathSeparator}'
+                'tcloud_face_groups_v1.json',
+              ).readAsString(),
+            )
+            as Map<String, dynamic>;
+    expect(storedIndex['manualOverrides'], <String, List<String>>{
+      '10:0:1': <String>['person_b'],
+    });
+  });
+
+  test(
+    'moving selected media updates only the chosen person association',
+    () async {
+      await _writeIndex(documentsDirectory, <String, Object>{
+        'associations': <String, List<String>>{
+          '10:0:1': <String>['person_a'],
+          '10:0:2': <String>['person_a', 'person_b'],
+        },
+        'names': <String, String>{'person_a': 'Ana', 'person_b': 'Bruno'},
+      });
+
+      await service.moveFilesToGroup('person_a', 'person_b', <String>[
+        '10:0:1',
+      ]);
+
+      final groups = await service.groupsFor(<TCloudFile>[_file(1), _file(2)]);
+      final ana = groups.singleWhere((group) => group.id == 'person_a');
+      final bruno = groups.singleWhere((group) => group.id == 'person_b');
+      expect(ana.files.map((file) => file.messageId), <int>[2]);
+      expect(bruno.files.map((file) => file.messageId), <int>[1, 2]);
+    },
+  );
+
+  test('new groups can be marked for review and confirmed', () async {
+    await _writeIndex(documentsDirectory, <String, Object>{
+      'associations': <String, List<String>>{
+        '10:0:1': <String>['person_a'],
+      },
+      'names': <String, String>{'person_a': 'Pessoa 1'},
+      'pendingReview': <String>['person_a'],
+    });
+
+    final before = await service.groupsFor(<TCloudFile>[_file(1)]);
+    expect(before.single.needsReview, isTrue);
+
+    await service.confirmGroupReviewed('person_a');
+
+    final after = await service.groupsFor(<TCloudFile>[_file(1)]);
+    expect(after.single.needsReview, isFalse);
+  });
+
+  test('video sampling spaces frames and caps long videos', () {
+    expect(FaceGroupingService.videoFrameTimestampsMs(0), <int>[1_000]);
+    expect(FaceGroupingService.videoFrameTimestampsMs(25), <int>[
+      4_167,
+      12_500,
+      20_833,
+    ]);
+    expect(FaceGroupingService.videoFrameTimestampsMs(300).length, 12);
   });
 
   test(

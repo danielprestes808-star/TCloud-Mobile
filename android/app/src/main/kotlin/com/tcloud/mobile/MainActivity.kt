@@ -1018,11 +1018,22 @@ else -> result.notImplemented()
                         call.argument<String>(
                             "path"
                         ).orEmpty()
+                    val timeMs =
+                        call.argument<Number>(
+                            "timeMs"
+                        )?.toLong()
+                            ?: 1_000L
+                    val forFaceAnalysis =
+                        call.argument<Boolean>(
+                            "forFaceAnalysis"
+                        ) == true
 
                     try {
                         result.success(
                             generateVideoThumbnail(
-                                path
+                                path,
+                                timeMs,
+                                forFaceAnalysis
                             )
                         )
                     } catch (
@@ -3332,7 +3343,9 @@ private fun listGalleryMedia(
     }
 
     private fun generateVideoThumbnail(
-        path: String
+        path: String,
+        timeMs: Long = 1_000L,
+        forFaceAnalysis: Boolean = false
     ): String? {
         if (path.isBlank()) {
             return null
@@ -3348,7 +3361,11 @@ private fun listGalleryMedia(
         val outputDir =
             File(
                 cacheDir,
-                "tcloud_video_thumbnails"
+                if (forFaceAnalysis) {
+                    "tcloud_face_scan_frames"
+                } else {
+                    "tcloud_video_thumbnails"
+                }
             )
 
         outputDir.mkdirs()
@@ -3364,10 +3381,22 @@ private fun listGalleryMedia(
                     "_" +
                     source.lastModified()
                         .toString() +
+                    "_" +
+                    timeMs
+                        .coerceAtLeast(0L)
+                        .toString() +
+                    (if (forFaceAnalysis) {
+                            "_" +
+                                System.nanoTime()
+                                    .toString()
+                        } else {
+                            ""
+                        }) +
                     ".jpg"
             )
 
         if (
+            !forFaceAnalysis &&
             output.exists() &&
             output.length() > 0L
         ) {
@@ -3388,7 +3417,7 @@ private fun listGalleryMedia(
                         android.os.Build.VERSION_CODES.O_MR1
                 ) {
                     retriever.getScaledFrameAtTime(
-                        1_000_000L,
+                        timeMs.coerceAtLeast(0L) * 1_000L,
                         MediaMetadataRetriever
                             .OPTION_CLOSEST_SYNC,
                         480,
@@ -3396,7 +3425,7 @@ private fun listGalleryMedia(
                     )
                 } else {
                     retriever.getFrameAtTime(
-                        1_000_000L,
+                        timeMs.coerceAtLeast(0L) * 1_000L,
                         MediaMetadataRetriever
                             .OPTION_CLOSEST_SYNC
                     )

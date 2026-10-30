@@ -28,6 +28,27 @@ class TCloudTemporaryMediaDownload {
 }
 
 class TCloudRepository {
+  Future<TCloudTemporaryMediaDownload> extractVideoFrameForTemporaryAnalysis({
+    required String videoPath,
+    required int timeMs,
+  }) async {
+    final path = await _td.generateVideoFrameForAnalysis(
+      videoPath,
+      timeMs: timeMs,
+    );
+    if (path == null || !await File(path).exists()) {
+      throw StateError('Não foi possível extrair um quadro do vídeo.');
+    }
+
+    return TCloudTemporaryMediaDownload(
+      path: path,
+      release: () async {
+        final frame = File(path);
+        if (await frame.exists()) await frame.delete();
+      },
+    );
+  }
+
   Future<TCloudTemporaryMediaDownload> downloadForTemporaryAnalysis(
     TCloudFile file,
   ) async {

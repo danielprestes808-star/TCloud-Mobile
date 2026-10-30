@@ -271,6 +271,22 @@ class TdlibService {
     return clean;
   }
 
+  Future<String?> generateVideoFrameForAnalysis(
+    String path, {
+    required int timeMs,
+  }) async {
+    final result = await _methods.invokeMethod<String>(
+      'generateVideoThumbnail',
+      <String, dynamic>{
+        'path': path,
+        'timeMs': timeMs,
+        'forFaceAnalysis': true,
+      },
+    );
+    final clean = result?.trim();
+    return clean == null || clean.isEmpty ? null : clean;
+  }
+
   Future<bool> requestMediaPermission() async {
     return await _methods.invokeMethod<bool>('requestMediaPermission') ?? false;
   }

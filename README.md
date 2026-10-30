@@ -18,16 +18,15 @@ flutter run
 - Cada origem mantém seu próprio cursor, evitando repetição ou perda de páginas antigas.
 - O primeiro carregamento válido é armazenado em cache; falhas transitórias não apagam arquivos já descobertos.
 
-Versão atual: **1.1.41+122**.
+Versão atual: **1.1.42+123**.
 
-A galeria separa imagens e vídeos e oferece agrupamento facial local por álbum.
-Os grupos faciais podem ser revisados, combinados e corrigidos sem apagar as
-fotos originais. A fila de backup permite atualizar o estado e tentar novamente.
-Antes de analisar um álbum, o app informa quantas imagens remotas serão
-baixadas temporariamente e estima o volume de dados. A análise roda no aparelho,
-com progresso e opção de interromper após a imagem atual; o cache temporário é
-limpo ao concluir cada imagem, com aviso caso algum arquivo não possa ser
-removido.
+A galeria oferece agrupamento facial local por álbum ou biblioteca. A análise
+inclui fotos e amostras de vídeos (um quadro a cada cerca de 10 segundos, até 12
+por vídeo), com confirmação da quantidade e do tráfego estimado antes de baixar
+mídia remota. Grupos podem ser revisados, renomeados, combinados e corrigidos
+sem apagar os originais. A análise pode ser pausada e retomada; dados faciais e
+grupos também podem ser removidos do aparelho. A navegação e a exibição das
+pastas foram simplificadas para destacar os destinos e ações mais usados.
 
 Para gerar um APK que atualize tanto as instalacoes debug antigas quanto as
 releases oficiais, execute primeiro `flutter build apk --release` e depois

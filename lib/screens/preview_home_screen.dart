@@ -31,6 +31,7 @@ import 'sync_queue_screen.dart';
 import '../services/app_update_service.dart';
 import 'folder_screen.dart';
 import 'gallery_folders_screen.dart';
+import 'face_groups_screen.dart';
 import 'integrity_center_screen.dart';
 import 'storage_management_screen.dart';
 import '../services/media_cache_policy.dart';
@@ -4442,132 +4443,63 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
                 child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF2868D7), Color(0xFF2699C6)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(18),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  decoration: BoxDecoration(
+                    color: TCloudTheme.surfaceSoft,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
                     children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 48,
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: .16),
-                              borderRadius: BorderRadius.circular(7),
-                            ),
-                            child: Icon(
-                              Icons.cloud_done_rounded,
-                              color: Colors.white,
-                              size: 27,
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Seu TCloud',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 18,
-                                  ),
-                                ),
-                                const Text(
-                                  'Arquivos protegidos e disponíveis',
-                                  style: TextStyle(color: Colors.white70),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                      Icon(
+                        Icons.cloud_done_outlined,
+                        color: TCloudTheme.primary,
                       ),
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          _LibraryMetric(
-                            value: '${_folders.length}',
-                            label: _folders.length == 1 ? 'pasta' : 'pastas',
-                            light: true,
-                          ),
-                          const SizedBox(width: 28),
-                          _LibraryMetric(
-                            value: '${_media.length}',
-                            label: _media.length == 1 ? 'mídia' : 'mídias',
-                            light: true,
-                          ),
-                          const Spacer(),
-                          IconButton.filledTonal(
-                            tooltip: 'Sincronizar agora',
-                            onPressed: _syncingGallery
-                                ? null
-                                : () => _runGallerySync(),
-                            style: IconButton.styleFrom(
-                              backgroundColor: Colors.white.withValues(
-                                alpha: .18,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Sua biblioteca',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            Text(
+                              '${_folders.length} ${_folders.length == 1 ? 'pasta' : 'pastas'} · '
+                              '${_media.length} ${_media.length == 1 ? 'mídia' : 'mídias'}',
+                              style: TextStyle(
+                                color: TCloudTheme.textSecondary,
+                                fontSize: 12,
                               ),
-                              foregroundColor: Colors.white,
                             ),
-                            icon: _syncingGallery
-                                ? SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(Icons.sync_rounded),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          const Expanded(
-                            child: Text(
-                              'Biblioteca catalogada',
-                              style: TextStyle(color: Colors.white),
+                            Text(
+                              '${_humanSize(cataloguedBytes)} catalogado · '
+                              '${_humanSize(offlineCataloguedBytes)} offline',
+                              style: TextStyle(
+                                color: TCloudTheme.textSecondary,
+                                fontSize: 12,
+                              ),
                             ),
-                          ),
-                          Text(
-                            _humanSize(cataloguedBytes),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 7),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: LinearProgressIndicator(
-                          value: cataloguedBytes == 0
-                              ? 0
-                              : (offlineCataloguedBytes / cataloguedBytes)
-                                    .clamp(0.0, 1.0),
-                          minHeight: 7,
-                          backgroundColor: Colors.white.withValues(alpha: .25),
-                          color: Colors.white,
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '${_humanSize(offlineCataloguedBytes)} disponível offline · '
-                        'total do catálogo, não representa cota da conta',
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 12,
-                        ),
+                      IconButton(
+                        tooltip: _syncingGallery
+                            ? 'Sincronizando'
+                            : 'Sincronizar agora',
+                        onPressed: _syncingGallery
+                            ? null
+                            : () => _runGallerySync(),
+                        icon: _syncingGallery
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.sync_rounded),
                       ),
                     ],
                   ),
@@ -4575,50 +4507,26 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
               ),
             ),
           if (_deviceSpace == 'all')
-            const SliverToBoxAdapter(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(18, 22, 18, 8),
-                child: Text(
-                  'Acesso rápido',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                ),
-              ),
-            ),
-          if (_deviceSpace == 'all')
             SliverToBoxAdapter(
-              child: SizedBox(
-                height: 72,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 18),
-                  children: [
-                    _TCloudQuickCard(
-                      icon: Icons.offline_pin_outlined,
-                      title: TCloudLabels.offline,
-                      subtitle: '${_offline.length} itens',
-                      onTap: () => _openSection(4),
-                    ),
-                    const SizedBox(width: 10),
-                    _TCloudQuickCard(
-                      icon: Icons.sync_alt_rounded,
-                      title: 'Transferências',
-                      subtitle: 'Envios e downloads',
-                      onTap: () => _openSection(2),
-                    ),
-                    const SizedBox(width: 10),
-                    _TCloudQuickCard(
-                      icon: Icons.settings_outlined,
-                      title: TCloudLabels.settings,
-                      subtitle: 'Backup e armazenamento',
-                      onTap: () => _openSection(3),
-                    ),
-                  ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: ListTile(
+                  leading: Icon(
+                    Icons.offline_pin_outlined,
+                    color: TCloudTheme.primary,
+                  ),
+                  title: const Text('Disponível offline'),
+                  subtitle: Text(
+                    '${_offline.length} ${_offline.length == 1 ? 'arquivo' : 'arquivos'} neste dispositivo',
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => _openSection(4),
                 ),
               ),
             ),
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 24, 10, 6),
+              padding: const EdgeInsets.fromLTRB(18, 14, 10, 6),
               child: Row(
                 children: [
                   const Expanded(
@@ -4699,41 +4607,73 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
             )
           else
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-              sliver: SliverGrid(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              sliver: SliverList(
                 delegate: SliverChildBuilderDelegate((_, i) {
-                  final f = albums[i];
-                  return _TCloudAlbumCard(
-                    key: ValueKey<String>('album:${f.cacheKey}'),
-                    folder: f,
-                    displayTitle: _deviceSpace == 'phone'
-                        ? f.title.replaceFirst(
-                            RegExp(r'^\s*Galeria\s*/\s*', caseSensitive: false),
-                            '',
-                          )
-                        : f.title,
-                    sourceCount: _repo.sourceCountForFolder(f),
-                    onTap: () async {
-                      if (f.title.trim().toLowerCase() == 'galeria') {
-                        await _showGalleryChildren();
-                        return;
-                      }
-
-                      await Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => FolderScreen(folder: f),
+                  final folder = albums[i];
+                  final displayTitle = _deviceSpace == 'phone'
+                      ? folder.title.replaceFirst(
+                          RegExp(r'^\s*Galeria\s*/\s*', caseSensitive: false),
+                          '',
+                        )
+                      : folder.title;
+                  final sourceCount = _repo.sourceCountForFolder(folder);
+                  return Column(
+                    children: [
+                      ListTile(
+                        key: ValueKey<String>('album:${folder.cacheKey}'),
+                        leading: CircleAvatar(
+                          backgroundColor: TCloudTheme.primary.withValues(
+                            alpha: .10,
+                          ),
+                          child: Icon(
+                            folder.isGeneral
+                                ? Icons.forum_outlined
+                                : Icons.folder_outlined,
+                            color: TCloudTheme.primary,
+                          ),
                         ),
-                      );
-                    },
-                    onOptions: () => _showAlbumActions(f),
+                        title: Text(
+                          displayTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          folder.isGeneral
+                              ? 'Pasta principal'
+                              : sourceCount > 1
+                              ? 'Disponível em $sourceCount locais'
+                              : folder.forumTitle.trim().isNotEmpty
+                              ? folder.forumTitle.trim()
+                              : 'Pasta do TCloud',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: IconButton(
+                          tooltip: 'Opções da pasta $displayTitle',
+                          onPressed: () => _showAlbumActions(folder),
+                          icon: const Icon(Icons.more_vert_rounded),
+                        ),
+                        onLongPress: () => _showAlbumActions(folder),
+                        onTap: () async {
+                          if (folder.title.trim().toLowerCase() == 'galeria') {
+                            await _showGalleryChildren();
+                            return;
+                          }
+
+                          await Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => FolderScreen(folder: folder),
+                            ),
+                          );
+                        },
+                      ),
+                      if (i < albums.length - 1)
+                        const Divider(height: 1, indent: 72),
+                    ],
                   );
                 }, childCount: albums.length),
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 260,
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 10,
-                  childAspectRatio: 1.08,
-                ),
               ),
             ),
           if (all.length > 12)
@@ -5344,6 +5284,8 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         return _settingsPage();
       case 4:
         return _offlinePage();
+      case 5:
+        return const FaceGroupsScreen.library();
       case 0:
       default:
         return _tcloudGalleryHomePage();
@@ -5386,6 +5328,25 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     if (index == 0) {
       unawaited(_loadMedia());
     }
+  }
+
+  int get _selectedNavigationIndex => switch (_currentIndex) {
+    4 => 1,
+    5 => 2,
+    2 => 3,
+    3 => 4,
+    _ => _currentIndex,
+  };
+
+  void _selectNavigationDestination(int index) {
+    _openSection(switch (index) {
+      0 => 0,
+      1 => 1,
+      2 => 5,
+      3 => 2,
+      4 => 3,
+      _ => 0,
+    });
   }
 
   void _handleLocalBack() {
@@ -5469,11 +5430,14 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                       2 => 'Transferências',
                       3 => TCloudLabels.settings,
                       4 => TCloudLabels.offline,
+                      5 => 'Pessoas',
                       _ => 'TCloud',
                     }, style: const TextStyle(fontWeight: FontWeight.w800)),
                     Text(
                       _deviceSpace != 'all'
                           ? 'Pastas desta conta'
+                          : _currentIndex == 5
+                          ? 'Pessoas nas suas fotos'
                           : _syncingGallery
                           ? 'Sincronizando sua nuvem'
                           : 'Seus arquivos, em um só lugar',
@@ -5535,8 +5499,8 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 },
               )
             : NavigationBar(
-                selectedIndex: _currentIndex == 4 ? 1 : _currentIndex,
-                onDestinationSelected: _openSection,
+                  selectedIndex: _selectedNavigationIndex,
+                  onDestinationSelected: _selectNavigationDestination,
                 destinations: const [
                   NavigationDestination(
                     icon: Icon(Icons.home_outlined),
@@ -5547,6 +5511,11 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                     icon: Icon(Icons.folder_outlined),
                     selectedIcon: Icon(Icons.folder_rounded),
                     label: 'Arquivos',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.people_outline_rounded),
+                    selectedIcon: Icon(Icons.people_rounded),
+                    label: 'Pessoas',
                   ),
                   NavigationDestination(
                     icon: Icon(Icons.swap_vert_circle_outlined),
@@ -6097,74 +6066,6 @@ class _NewFolderAlbumCard extends StatelessWidget {
   }
 }
 
-class _TCloudQuickCard extends StatelessWidget {
-  const _TCloudQuickCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 166,
-      child: Material(
-        color: TCloudTheme.surface,
-        borderRadius: BorderRadius.circular(8),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(13),
-            child: Row(
-              children: [
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: TCloudTheme.primary.withValues(alpha: .14),
-                    borderRadius: BorderRadius.circular(7),
-                  ),
-                  child: Icon(icon, color: TCloudTheme.primary),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                      Text(
-                        subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: TCloudTheme.textSecondary,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _DeviceSpaceCard extends StatelessWidget {
   const _DeviceSpaceCard({
     required this.icon,
@@ -6225,137 +6126,6 @@ class _DeviceSpaceCard extends StatelessWidget {
       ),
     ),
   );
-}
-
-class _LibraryMetric extends StatelessWidget {
-  const _LibraryMetric({
-    required this.value,
-    required this.label,
-    this.light = false,
-  });
-
-  final String value;
-  final String label;
-  final bool light;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          value,
-          style: TextStyle(
-            color: light ? Colors.white : TCloudTheme.textPrimary,
-            fontSize: 24,
-            height: 1,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            color: light ? Colors.white70 : TCloudTheme.textSecondary,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _TCloudAlbumCard extends StatelessWidget {
-  const _TCloudAlbumCard({
-    super.key,
-    required this.folder,
-    this.displayTitle,
-    required this.sourceCount,
-    required this.onTap,
-    required this.onOptions,
-  });
-  final TCloudFolder folder;
-  final String? displayTitle;
-  final int sourceCount;
-  final VoidCallback onTap;
-  final VoidCallback onOptions;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: TCloudTheme.surface,
-      borderRadius: BorderRadius.circular(8),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        onLongPress: onOptions,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [TCloudTheme.surfaceSoft, TCloudTheme.surface],
-                ),
-              ),
-            ),
-            Center(
-              child: Icon(
-                folder.isGeneral ? Icons.forum_outlined : Icons.folder_outlined,
-                size: 56,
-                color: TCloudTheme.primary,
-              ),
-            ),
-            Positioned(
-              left: 13,
-              right: 5,
-              bottom: 6,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          displayTitle ?? folder.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w900),
-                        ),
-                        Text(
-                          folder.isGeneral
-                              ? 'Pasta principal'
-                              : sourceCount > 1
-                              ? '$sourceCount pastas unificadas'
-                              : folder.forumTitle.trim().isNotEmpty
-                              ? folder.forumTitle.trim()
-                              : 'Pasta do TCloud',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: TCloudTheme.textSecondary,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onOptions,
-                    icon: const Icon(Icons.more_vert, size: 20),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _DriveFolderTile extends StatelessWidget {
