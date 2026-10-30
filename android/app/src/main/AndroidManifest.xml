@@ -19,6 +19,8 @@
 <!-- TCLOUD_VIDEO_LOCAL_HTTP_1039: HTTP local 127.0.0.1 usado pelo player -->
     <application android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/tcloud_network_security_config"
+        android:fullBackupContent="@xml/tcloud_backup_rules"
+        android:dataExtractionRules="@xml/tcloud_data_extraction_rules"
         android:label="TCloud"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"

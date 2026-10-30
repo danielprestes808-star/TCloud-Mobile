@@ -14,11 +14,14 @@ import '../services/transfer_center.dart';
 import '../services/thumbnail_cache_service.dart';
 import '../services/folder_share_service.dart';
 import '../telegram/tdlib_service.dart';
+import 'face_groups_screen.dart';
 import 'media_viewer_screen.dart';
 
 enum _ViewMode { list, gallery }
 
 enum _SortMode { newest, name, size, type }
+
+enum _MediaFilter { all, images, videos }
 
 class FolderScreen extends StatefulWidget {
   const FolderScreen({super.key, required this.folder});
@@ -58,6 +61,7 @@ class _FolderScreenState extends State<FolderScreen> {
 
   _ViewMode _viewMode = _ViewMode.list;
   _SortMode _sortMode = _SortMode.newest;
+  _MediaFilter _mediaFilter = _MediaFilter.all;
 
   bool get _selectionMode => _selectedFileIds.isNotEmpty;
 
@@ -327,6 +331,55 @@ class _FolderScreenState extends State<FolderScreen> {
         SnackBar(content: Text('Nao foi possivel carregar mais: $error')),
       );
     }
+  }
+
+  Future<List<TCloudFile>> _loadAllFilesForFaceGroups() async {
+    final files = <String, TCloudFile>{
+      for (final file in _files) file.contentIdentity: file,
+    };
+    var fromMessageId = _nextFromMessageId;
+    var fromMessageIds = _nextFromMessageIds;
+    var hasMore = _hasMore;
+    final seenCursors = <String>{};
+
+    while (hasMore) {
+      if (fromMessageId == 0 && fromMessageIds.isEmpty) {
+        throw StateError(
+          'A pasta informou mais arquivos sem um cursor valido.',
+        );
+      }
+      final cursorKey =
+          '$fromMessageId:${fromMessageIds.entries.toList()..sort((a, b) => a.key.compareTo(b.key))}';
+      if (!seenCursors.add(cursorKey)) {
+        throw StateError('A pasta retornou um cursor de pagina repetido.');
+      }
+
+      final page = await _repo.loadFilePage(
+        widget.folder,
+        fromMessageId: fromMessageId,
+        fromMessageIds: fromMessageIds,
+      );
+      for (final file in page.files) {
+        files.putIfAbsent(file.contentIdentity, () => file);
+      }
+
+      fromMessageId = page.nextFromMessageId;
+      fromMessageIds = page.nextFromMessageIds;
+      hasMore = page.hasMore;
+    }
+
+    final allFiles = files.values.toList();
+    if (mounted) {
+      setState(() {
+        _files
+          ..clear()
+          ..addAll(allFiles);
+        _nextFromMessageId = fromMessageId;
+        _nextFromMessageIds = fromMessageIds;
+        _hasMore = hasMore;
+      });
+    }
+    return allFiles;
   }
 
   Future<String> _ensureLocal(TCloudFile file) async {
@@ -671,9 +724,15 @@ class _FolderScreenState extends State<FolderScreen> {
     final query = _query.trim().toLowerCase();
 
     final result = _files.where((file) {
-      return query.isEmpty ||
-          file.name.toLowerCase().contains(query) ||
-          file.kind.toLowerCase().contains(query);
+      final matchesType = switch (_mediaFilter) {
+        _MediaFilter.all => true,
+        _MediaFilter.images => file.isImage || file.kind == 'animacao',
+        _MediaFilter.videos => file.isVideo,
+      };
+      return matchesType &&
+          (query.isEmpty ||
+              file.name.toLowerCase().contains(query) ||
+              file.kind.toLowerCase().contains(query));
     }).toList();
 
     switch (_sortMode) {
@@ -1030,6 +1089,10 @@ class _FolderScreenState extends State<FolderScreen> {
   Widget build(BuildContext context) {
     final visible = _visible;
     final sourceCount = _repo.sourceCountForFolder(widget.folder);
+    final imageCount = _files
+        .where((file) => file.isImage || file.kind == 'animacao')
+        .length;
+    final videoCount = _files.where((file) => file.isVideo).length;
 
     return PopScope(
       canPop: !_selectionMode,
@@ -1100,6 +1163,22 @@ class _FolderScreenState extends State<FolderScreen> {
                 icon: const Icon(Icons.offline_pin_outlined),
               ),
             ] else ...[
+              if (_hasMore || _files.any((file) => file.isImage))
+                IconButton(
+                  tooltip: 'Agrupar por rosto',
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => FaceGroupsScreen(
+                          folderTitle: widget.folder.title,
+                          files: List<TCloudFile>.unmodifiable(_files),
+                          loadAllFiles: _loadAllFilesForFaceGroups,
+                        ),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.face_retouching_natural_outlined),
+                ),
               IconButton(
                 tooltip: 'Compartilhar pasta',
                 onPressed: _shareFolder,
@@ -1148,6 +1227,35 @@ class _FolderScreenState extends State<FolderScreen> {
               ),
         body: Column(
           children: [
+            if (_hasMore || imageCount > 0 || videoCount > 0)
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+                child: Row(
+                  children: [
+                    ChoiceChip(
+                      label: Text('Todos (${_files.length})'),
+                      selected: _mediaFilter == _MediaFilter.all,
+                      onSelected: (_) =>
+                          setState(() => _mediaFilter = _MediaFilter.all),
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      label: Text('Imagens ($imageCount)'),
+                      selected: _mediaFilter == _MediaFilter.images,
+                      onSelected: (_) =>
+                          setState(() => _mediaFilter = _MediaFilter.images),
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      label: Text('Vídeos ($videoCount)'),
+                      selected: _mediaFilter == _MediaFilter.videos,
+                      onSelected: (_) =>
+                          setState(() => _mediaFilter = _MediaFilter.videos),
+                    ),
+                  ],
+                ),
+              ),
             if (_viewMode == _ViewMode.list)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
