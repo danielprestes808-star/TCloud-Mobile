@@ -9,11 +9,7 @@ void main() {
   ) async {
     SharedPreferences.setMockInitialValues({});
 
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: StorageManagementScreen(),
-      ),
-    );
+    await tester.pumpWidget(const MaterialApp(home: StorageManagementScreen()));
 
     // Aguarda o carregamento das estatísticas de armazenamento
     await tester.pumpAndSettle();
