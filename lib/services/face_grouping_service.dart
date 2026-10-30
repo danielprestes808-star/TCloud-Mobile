@@ -32,10 +32,15 @@ class FaceScanResult {
 }
 
 class _FaceIndex {
-  const _FaceIndex({required this.associations, required this.names});
+  const _FaceIndex({
+    required this.associations,
+    required this.names,
+    required this.aliases,
+  });
 
   final Map<String, Set<String>> associations;
   final Map<String, String> names;
+  final Map<String, String> aliases;
 }
 
 class FaceGroupingService {
@@ -74,9 +79,10 @@ class FaceGroupingService {
     final index = await _readIndex();
     final associations = index.associations;
     final names = index.names;
+    final aliases = index.aliases;
     if (localImages.isEmpty) {
       return FaceScanResult(
-        groups: _groupsFor(files, associations, names),
+        groups: _groupsFor(files, associations, names, aliases),
         scannedCount: 0,
         notAvailableLocallyCount: images.length,
         unmatchedCount: 0,
@@ -141,7 +147,7 @@ class FaceGroupingService {
               );
               names[personId] = name;
             }
-            people.add(personId);
+            people.add(_resolveAlias(personId, aliases));
             await cropFile.delete();
           }
           unmatchedIdentities.remove(identity);
@@ -159,10 +165,10 @@ class FaceGroupingService {
       }
     }
 
-    await _writeIndex(associations, names);
+    await _writeIndex(associations, names, aliases);
 
     return FaceScanResult(
-      groups: _groupsFor(files, associations, names),
+      groups: _groupsFor(files, associations, names, aliases),
       scannedCount: localImages.length,
       notAvailableLocallyCount: images.length - localImages.length,
       unmatchedCount: unmatchedIdentities.length,
@@ -171,7 +177,7 @@ class FaceGroupingService {
 
   Future<List<FaceGroup>> groupsFor(List<TCloudFile> files) async {
     final index = await _readIndex();
-    return _groupsFor(files, index.associations, index.names);
+    return _groupsFor(files, index.associations, index.names, index.aliases);
   }
 
   Future<void> renameGroup(String id, String name) async {
@@ -181,7 +187,51 @@ class FaceGroupingService {
     }
     final index = await _readIndex();
     index.names[id] = cleanName;
-    await _writeIndex(index.associations, index.names);
+    await _writeIndex(index.associations, index.names, index.aliases);
+  }
+
+  Future<void> removeFilesFromGroup(
+    String personId,
+    Iterable<String> fileIdentities,
+  ) async {
+    final index = await _readIndex();
+    final target = _resolveAlias(personId, index.aliases);
+
+    for (final identity in fileIdentities.toSet()) {
+      final people = index.associations[identity];
+      if (people == null) continue;
+      people.removeWhere(
+        (person) => _resolveAlias(person, index.aliases) == target,
+      );
+      if (people.isEmpty) index.associations.remove(identity);
+    }
+
+    await _writeIndex(index.associations, index.names, index.aliases);
+  }
+
+  Future<void> mergeGroups(String sourceId, String destinationId) async {
+    final index = await _readIndex();
+    final source = _resolveAlias(sourceId, index.aliases);
+    final destination = _resolveAlias(destinationId, index.aliases);
+    if (source == destination) {
+      throw ArgumentError('Escolha duas pessoas diferentes para combinar.');
+    }
+
+    index.aliases[source] = destination;
+    for (final alias in index.aliases.keys.toList()) {
+      index.aliases[alias] = _resolveAlias(alias, index.aliases);
+    }
+
+    for (final people in index.associations.values) {
+      final canonicalPeople = people
+          .map((person) => _resolveAlias(person, index.aliases))
+          .toSet();
+      people
+        ..clear()
+        ..addAll(canonicalPeople);
+    }
+    index.names.remove(source);
+    await _writeIndex(index.associations, index.names, index.aliases);
   }
 
   Future<_FaceIndex> _readIndex() async {
@@ -190,6 +240,7 @@ class FaceGroupingService {
       return _FaceIndex(
         associations: <String, Set<String>>{},
         names: <String, String>{},
+        aliases: <String, String>{},
       );
     }
 
@@ -199,8 +250,10 @@ class FaceGroupingService {
     }
     final rawAssociations = decoded['associations'];
     final rawNames = decoded['names'];
+    final rawAliases = decoded['aliases'];
     if (rawAssociations is! Map<String, dynamic> ||
-        rawNames is! Map<String, dynamic>) {
+        rawNames is! Map<String, dynamic> ||
+        (rawAliases != null && rawAliases is! Map<String, dynamic>)) {
       throw const FormatException('Indice local de rostos invalido.');
     }
 
@@ -211,12 +264,22 @@ class FaceGroupingService {
       return MapEntry(identity, people.map((id) => id.toString()).toSet());
     });
     final names = rawNames.map((id, name) => MapEntry(id, name.toString()));
-    return _FaceIndex(associations: associations, names: names);
+    final aliases = rawAliases == null
+        ? <String, String>{}
+        : (rawAliases as Map<String, dynamic>).map(
+            (id, canonical) => MapEntry(id, canonical.toString()),
+          );
+    return _FaceIndex(
+      associations: associations,
+      names: names,
+      aliases: aliases,
+    );
   }
 
   Future<void> _writeIndex(
     Map<String, Set<String>> associations,
     Map<String, String> names,
+    Map<String, String> aliases,
   ) async {
     final file = await _indexFile();
     await file.parent.create(recursive: true);
@@ -224,6 +287,7 @@ class FaceGroupingService {
       jsonEncode(<String, Object>{
         'associations': _encodeAssociations(associations),
         'names': names,
+        'aliases': aliases,
       }),
       flush: true,
     );
@@ -265,13 +329,15 @@ class FaceGroupingService {
     List<TCloudFile> files,
     Map<String, Set<String>> associations,
     Map<String, String> names,
+    Map<String, String> aliases,
   ) {
     final filesByPerson = <String, Map<String, TCloudFile>>{};
     for (final file in files.where((item) => item.isImage)) {
       for (final person
           in associations[file.contentIdentity] ?? const <String>{}) {
+        final canonicalPerson = _resolveAlias(person, aliases);
         filesByPerson.putIfAbsent(
-          person,
+          canonicalPerson,
           () => <String, TCloudFile>{},
         )[file.contentIdentity] = file;
       }
@@ -292,5 +358,16 @@ class FaceGroupingService {
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
           );
     return groups;
+  }
+
+  String _resolveAlias(String personId, Map<String, String> aliases) {
+    var current = personId;
+    final visited = <String>{};
+    while (visited.add(current)) {
+      final next = aliases[current];
+      if (next == null || next.isEmpty || next == current) break;
+      current = next;
+    }
+    return current;
   }
 }

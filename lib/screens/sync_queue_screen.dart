@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../core/tcloud_theme.dart';
 import '../services/gallery_sync_service.dart';
+import '../services/tcloud_repository.dart';
 
 class SyncQueueScreen extends StatefulWidget {
   const SyncQueueScreen({super.key});
@@ -17,12 +18,15 @@ class _SyncQueueScreenState extends State<SyncQueueScreen> {
   Timer? _timer;
   Map<String, dynamic> _snapshot = const <String, dynamic>{};
   bool _loading = true;
+  bool _refreshing = false;
+  bool _retrying = false;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
     _refresh();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _refresh());
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _refresh());
   }
 
   @override
@@ -32,16 +36,51 @@ class _SyncQueueScreenState extends State<SyncQueueScreen> {
   }
 
   Future<void> _refresh() async {
+    if (_refreshing) return;
+    _refreshing = true;
     try {
       final next = await _sync.syncActivitySnapshot();
       if (!mounted) return;
       setState(() {
         _snapshot = next;
         _loading = false;
+        _error = null;
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        _error = 'Não foi possível atualizar a fila: $error';
+      });
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  Future<void> _retryPendingSync() async {
+    if (_retrying) return;
+    setState(() {
+      _retrying = true;
+      _error = null;
+    });
+    try {
+      final folders = await TCloudRepository.instance.discoverFolders();
+      final result = await _sync.syncNow(folders);
+      await _refresh();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Sincronização: ${result.uploaded} enviado(s), '
+            '${result.failed} com falha e ${result.pending} pendente(s).',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = 'Não foi possível sincronizar: $error');
+    } finally {
+      if (mounted) setState(() => _retrying = false);
     }
   }
 
@@ -71,7 +110,16 @@ class _SyncQueueScreenState extends State<SyncQueueScreen> {
     }).toList();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Sincronizacao')),
+      appBar: AppBar(
+        title: const Text('Sincronização'),
+        actions: [
+          IconButton(
+            tooltip: 'Atualizar fila',
+            onPressed: _refreshing ? null : _refresh,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
@@ -89,6 +137,27 @@ class _SyncQueueScreenState extends State<SyncQueueScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        if (_error != null) ...[
+                          Container(
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.errorContainer,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              _error!,
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onErrorContainer,
+                              ),
+                            ),
+                          ),
+                        ],
                         Text(
                           stalled
                               ? 'Sincronização demorando mais que o normal'
@@ -107,13 +176,13 @@ class _SyncQueueScreenState extends State<SyncQueueScreen> {
                         const SizedBox(height: 10),
                         Text(
                           total > 0
-                              ? '$uploaded de $total enviados'
+                              ? '$done de $total concluído(s) · $uploaded enviado(s)'
                               : '$pending arquivo(s) na fila de segundo plano',
                           style: TextStyle(color: TCloudTheme.textSecondary),
                         ),
                         if (failed > 0)
                           Text(
-                            '$failed com falha; nova tentativa sera feita.',
+                            '$failed com falha; o TCloud tentará novamente automaticamente.',
                             style: TextStyle(color: TCloudTheme.textSecondary),
                           ),
                         if (running && filesPerMinute > 0) ...[
@@ -128,6 +197,25 @@ class _SyncQueueScreenState extends State<SyncQueueScreen> {
                           const SizedBox(height: 10),
                           const Text(
                             'O item atual será preservado na fila e retomado automaticamente sem recomeçar os concluídos.',
+                          ),
+                        ],
+                        if (pending > 0 || failed > 0 || _error != null) ...[
+                          const SizedBox(height: 12),
+                          FilledButton.tonalIcon(
+                            onPressed: _retrying ? null : _retryPendingSync,
+                            icon: _retrying
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.sync_rounded),
+                            label: Text(
+                              _retrying
+                                  ? 'Sincronizando...'
+                                  : 'Tentar sincronizar novamente',
+                            ),
                           ),
                         ],
                       ],

@@ -23,7 +23,9 @@ class _StorageManagementScreenState extends State<StorageManagementScreen> {
 
   bool _loading = true;
   bool _clearingCache = false;
+  bool _clearingOffline = false;
   bool _optimizing = false;
+  String? _storageError;
 
   int _thumbnailBytes = 0;
   int _thumbnailCount = 0;
@@ -66,9 +68,15 @@ class _StorageManagementScreenState extends State<StorageManagementScreen> {
         _offlineFiles = offline;
         _offlineBytes = offlineBytes;
         _loading = false;
+        _storageError = null;
       });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _storageError = error.toString();
+        });
+      }
     }
   }
 
@@ -151,15 +159,11 @@ class _StorageManagementScreenState extends State<StorageManagementScreen> {
 
   Future<void> _removeOfflineFile(TCloudFile file) async {
     try {
-      await _repo.removeOffline(file);
       if (file.localPath != null && file.localPath!.isNotEmpty) {
-        try {
-          final f = File(file.localPath!);
-          if (await f.exists()) {
-            await f.delete();
-          }
-        } catch (_) {}
+        final localFile = File(file.localPath!);
+        if (await localFile.exists()) await localFile.delete();
       }
+      await _repo.removeOffline(file);
       await _loadStorageStats();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -169,9 +173,9 @@ class _StorageManagementScreenState extends State<StorageManagementScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Falha ao remover arquivo: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Falha ao remover arquivo: $e')));
     }
   }
 
@@ -199,25 +203,54 @@ class _StorageManagementScreenState extends State<StorageManagementScreen> {
 
     if (confirm != true) return;
 
+    if (_clearingOffline) return;
+    setState(() => _clearingOffline = true);
+    var removed = 0;
+    final failures = <String>[];
     for (final file in List<TCloudFile>.from(_offlineFiles)) {
       try {
-        await _repo.removeOffline(file);
         if (file.localPath != null && file.localPath!.isNotEmpty) {
           final f = File(file.localPath!);
           if (await f.exists()) await f.delete();
         }
-      } catch (_) {}
+        await _repo.removeOffline(file);
+        removed++;
+      } catch (error) {
+        failures.add('${file.name}: $error');
+      }
     }
 
     await _loadStorageStats();
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text(
-          'Todos os arquivos offline foram removidos do aparelho.',
+    setState(() => _clearingOffline = false);
+    if (failures.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$removed arquivo(s) removido(s) do aparelho.'),
+          backgroundColor: TCloudTheme.success,
         ),
-        backgroundColor: TCloudTheme.success,
+      );
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Alguns arquivos não foram removidos'),
+        content: SingleChildScrollView(
+          child: Text(
+            '$removed removido(s); ${failures.length} falharam. '
+            'Os itens com falha permanecem na lista offline.\n\n'
+            '${failures.join('\n')}',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Fechar'),
+          ),
+        ],
       ),
     );
   }
@@ -245,6 +278,33 @@ class _StorageManagementScreenState extends State<StorageManagementScreen> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
+                if (_storageError != null)
+                  Card(
+                    color: Theme.of(context).colorScheme.errorContainer,
+                    child: ListTile(
+                      leading: Icon(
+                        Icons.error_outline,
+                        color: Theme.of(context).colorScheme.onErrorContainer,
+                      ),
+                      title: Text(
+                        'Não foi possível carregar todos os dados.',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onErrorContainer,
+                        ),
+                      ),
+                      subtitle: Text(
+                        _storageError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onErrorContainer,
+                        ),
+                      ),
+                      trailing: IconButton(
+                        tooltip: 'Tentar novamente',
+                        onPressed: _loadStorageStats,
+                        icon: const Icon(Icons.refresh_rounded),
+                      ),
+                    ),
+                  ),
                 // Card de Resumo de Uso
                 Container(
                   padding: const EdgeInsets.all(20),
@@ -261,7 +321,9 @@ class _StorageManagementScreenState extends State<StorageManagementScreen> {
                           Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: TCloudTheme.primary.withValues(alpha: 0.15),
+                              color: TCloudTheme.primary.withValues(
+                                alpha: 0.15,
+                              ),
                               borderRadius: BorderRadius.circular(14),
                             ),
                             child: Icon(
@@ -389,7 +451,9 @@ class _StorageManagementScreenState extends State<StorageManagementScreen> {
                         trailing: _clearingCache
                             ? const SizedBox.square(
                                 dimension: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : FilledButton.tonal(
                                 onPressed: _clearCache,
@@ -419,7 +483,9 @@ class _StorageManagementScreenState extends State<StorageManagementScreen> {
                         trailing: _optimizing
                             ? const SizedBox.square(
                                 dimension: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : OutlinedButton(
                                 onPressed: _optimizeDatabase,
@@ -446,10 +512,10 @@ class _StorageManagementScreenState extends State<StorageManagementScreen> {
                     ),
                     if (_offlineFiles.isNotEmpty)
                       TextButton(
-                        onPressed: _clearAllOffline,
-                        child: const Text(
-                          'Remover todos',
-                          style: TextStyle(
+                        onPressed: _clearingOffline ? null : _clearAllOffline,
+                        child: Text(
+                          _clearingOffline ? 'Removendo...' : 'Remover todos',
+                          style: const TextStyle(
                             color: Colors.redAccent,
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
@@ -509,7 +575,8 @@ class _StorageManagementScreenState extends State<StorageManagementScreen> {
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       itemCount: _offlineFiles.length,
-                      separatorBuilder: (context, index) => const Divider(height: 1),
+                      separatorBuilder: (context, index) =>
+                          const Divider(height: 1),
                       itemBuilder: (context, index) {
                         final file = _offlineFiles[index];
                         return ListTile(
@@ -517,10 +584,10 @@ class _StorageManagementScreenState extends State<StorageManagementScreen> {
                             file.isVideo
                                 ? Icons.videocam_rounded
                                 : file.isImage
-                                    ? Icons.image_rounded
-                                    : (file.kind == 'audio'
-                                        ? Icons.audiotrack_rounded
-                                        : Icons.insert_drive_file_rounded),
+                                ? Icons.image_rounded
+                                : (file.kind == 'audio'
+                                      ? Icons.audiotrack_rounded
+                                      : Icons.insert_drive_file_rounded),
                             color: TCloudTheme.primary,
                           ),
                           title: Text(
@@ -574,10 +641,7 @@ class _LegendItem extends StatelessWidget {
         Container(
           width: 10,
           height: 10,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 8),
         Column(
@@ -585,17 +649,11 @@ class _LegendItem extends StatelessWidget {
           children: [
             Text(
               title,
-              style: TextStyle(
-                fontSize: 11,
-                color: TCloudTheme.textSecondary,
-              ),
+              style: TextStyle(fontSize: 11, color: TCloudTheme.textSecondary),
             ),
             Text(
               value,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
             ),
           ],
         ),

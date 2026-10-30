@@ -54,6 +54,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   final _repo = TCloudRepository.instance;
   final _sync = GallerySyncService.instance;
   final _libraryPrefs = LibraryPreferencesService.instance;
+  late Future<TCloudAppInfo> _appInfoFuture;
   final _folderSearchController = TextEditingController();
   int _currentIndex = 0;
 
@@ -275,6 +276,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     unawaited(MediaCachePolicy.instance.optimize());
 
     super.initState();
+    _appInfoFuture = TCloudAppUpdateService.instance.currentAppInfo();
 
     unawaited(_loadHomeDisplayPreferences());
 
@@ -3705,9 +3707,16 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                             ),
                           ),
                           SizedBox(height: 3),
-                          Text(
-                            'Android • versão 1.1.37',
-                            style: TextStyle(color: TCloudTheme.textSecondary),
+                          FutureBuilder<TCloudAppInfo>(
+                            future: _appInfoFuture,
+                            builder: (context, snapshot) => Text(
+                              snapshot.hasError
+                                  ? 'Android • versão indisponível'
+                                  : 'Android • versão ${snapshot.data?.version ?? '...'}',
+                              style: TextStyle(
+                                color: TCloudTheme.textSecondary,
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -4928,17 +4937,39 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                   ])
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
-                      child: FilterChip(
-                        label: Text(filter),
-                        selected: _homeFilesFilter == filter,
-                        onSelected: (_) =>
-                            setState(() => _homeFilesFilter = filter),
+                      child: Tooltip(
+                        message: filter == 'Duplicados'
+                            ? 'Mesmo nome e tamanho; revise antes de excluir.'
+                            : filter,
+                        child: FilterChip(
+                          label: Text(
+                            filter == 'Duplicados'
+                                ? 'Possíveis duplicados'
+                                : filter,
+                          ),
+                          selected: _homeFilesFilter == filter,
+                          onSelected: (_) =>
+                              setState(() => _homeFilesFilter = filter),
+                        ),
                       ),
                     ),
                 ],
               ),
             ),
           ),
+          if (_homeFilesFilter == 'Duplicados')
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
+                child: Text(
+                  'Candidatos com o mesmo nome e tamanho. Confira o conteúdo antes de apagar.',
+                  style: TextStyle(
+                    color: TCloudTheme.textSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
           if (filteredFiles.isEmpty)
             const SliverToBoxAdapter(
               child: Padding(
