@@ -421,9 +421,14 @@ else -> result.notImplemented()
                         android.os.BatteryManager.EXTRA_STATUS,
                         -1
                     ) ?: -1
+                    val plugged = battery?.getIntExtra(
+                        android.os.BatteryManager.EXTRA_PLUGGED,
+                        0
+                    ) ?: 0
                     result.success(
-                        status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
-                            status == android.os.BatteryManager.BATTERY_STATUS_FULL
+                        plugged != 0 &&
+                            (status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                                status == android.os.BatteryManager.BATTERY_STATUS_FULL)
                     )
                 }
 
