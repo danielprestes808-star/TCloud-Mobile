@@ -23,6 +23,7 @@ import android.app.NotificationChannel
 import android.app.Activity
 import android.Manifest
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.MediaMetadataRetriever
 import android.graphics.Bitmap
 import android.content.ContentUris
@@ -410,6 +411,21 @@ else -> result.notImplemented()
                 result ->
 
             when (call.method) {
+
+                "isDeviceCharging" -> {
+                    val battery = registerReceiver(
+                        null,
+                        IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+                    )
+                    val status = battery?.getIntExtra(
+                        android.os.BatteryManager.EXTRA_STATUS,
+                        -1
+                    ) ?: -1
+                    result.success(
+                        status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                            status == android.os.BatteryManager.BATTERY_STATUS_FULL
+                    )
+                }
 
                 "getBackgroundBackupStatus" -> {
                     val powerManager = getSystemService(PowerManager::class.java)

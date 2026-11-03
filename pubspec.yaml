@@ -1,7 +1,7 @@
 name: mobile
 description: "TCloud Mobile para Android."
 publish_to: 'none'
-version: 1.1.45+126
+version: 1.1.46+127
 environment:
   sdk: ^3.12.2
 

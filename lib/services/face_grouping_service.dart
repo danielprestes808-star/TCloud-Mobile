@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -6,9 +7,11 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/tcloud_file.dart';
 import 'tcloud_repository.dart';
+import '../telegram/tdlib_service.dart';
 
 class FaceGroup {
   const FaceGroup({
@@ -49,6 +52,7 @@ class _FaceIndex {
     required this.aliases,
     required this.pendingReview,
     required this.manualOverrides,
+    required this.scannedIdentities,
   });
 
   final Map<String, Set<String>> associations;
@@ -56,6 +60,7 @@ class _FaceIndex {
   final Map<String, String> aliases;
   final Set<String> pendingReview;
   final Map<String, Set<String>> manualOverrides;
+  final Set<String> scannedIdentities;
 }
 
 class _FaceScanCheckpoint {
@@ -75,11 +80,13 @@ class FaceGroupingService {
 
   static const _indexFileName = 'tcloud_face_groups_v1.json';
   static const _scanCheckpointFileName = 'tcloud_face_scan_v1.json';
+  static const _automaticScanKey = 'tcloud_face_auto_scan_v1';
   static const _threshold = 0.68;
   static const _videoFrameIntervalSeconds = 10;
   static const _maximumVideoFrames = 12;
 
   Future<void>? _initializeTask;
+  Future<void> _analysisQueue = Future<void>.value();
 
   Future<void> _initialize() async {
     final task = _initializeTask ??= FaceVerification.instance.init();
@@ -99,6 +106,32 @@ class FaceGroupingService {
     bool Function()? shouldPause,
     String scanScope = 'default',
   }) async {
+    final previous = _analysisQueue;
+    final completed = Completer<void>();
+    _analysisQueue = completed.future;
+    await previous;
+    try {
+      return await _analyze(
+        files,
+        onProgress: onProgress,
+        onStatus: onStatus,
+        shouldCancel: shouldCancel,
+        shouldPause: shouldPause,
+        scanScope: scanScope,
+      );
+    } finally {
+      completed.complete();
+    }
+  }
+
+  Future<FaceScanResult> _analyze(
+    List<TCloudFile> files, {
+    required void Function(int completed, int total) onProgress,
+    void Function(String phase, int current, int total)? onStatus,
+    bool Function()? shouldCancel,
+    bool Function()? shouldPause,
+    required String scanScope,
+  }) async {
     final media = files.where((file) => file.isImage || file.isVideo).toList();
     final index = await _readIndex();
     final associations = index.associations;
@@ -106,6 +139,7 @@ class FaceGroupingService {
     final aliases = index.aliases;
     final pendingReview = index.pendingReview;
     final manualOverrides = index.manualOverrides;
+    final scannedIdentities = index.scannedIdentities;
     if (media.isEmpty) {
       return FaceScanResult(
         groups: _groupsFor(files, associations, names, aliases, pendingReview),
@@ -134,8 +168,37 @@ class FaceGroupingService {
         ? savedCheckpoint!.completedIdentities.intersection(currentIdentities)
         : <String>{};
     completedIdentities.addAll(
+      scannedIdentities.intersection(currentIdentities),
+    );
+    completedIdentities.addAll(
       manualOverrides.keys.where(currentIdentities.contains),
     );
+
+    if (shouldPause?.call() == true) {
+      return FaceScanResult(
+        groups: _groupsFor(files, associations, names, aliases, pendingReview),
+        scannedCount: 0,
+        failedFiles: const [],
+        unmatchedCount: completedIdentities
+            .where((identity) => !associations.containsKey(identity))
+            .length,
+        cancelled: false,
+        paused: true,
+      );
+    }
+
+    if (completedIdentities.length >= media.length) {
+      return FaceScanResult(
+        groups: _groupsFor(files, associations, names, aliases, pendingReview),
+        scannedCount: 0,
+        failedFiles: const [],
+        unmatchedCount: completedIdentities
+            .where((identity) => !associations.containsKey(identity))
+            .length,
+        cancelled: false,
+        paused: false,
+      );
+    }
 
     await _initialize();
 
@@ -146,7 +209,9 @@ class FaceGroupingService {
         performanceMode: FaceDetectorMode.fast,
       ),
     );
-    final unmatchedIdentities = <String>{};
+    final unmatchedIdentities = completedIdentities
+        .where((identity) => !associations.containsKey(identity))
+        .toSet();
     final failedFiles = <String>[];
     var cancelled = false;
     var paused = false;
@@ -162,6 +227,10 @@ class FaceGroupingService {
         final identity = file.contentIdentity;
         if (completedIdentities.contains(identity)) continue;
 
+        if (shouldPause?.call() == true) {
+          paused = true;
+          break;
+        }
         if (shouldCancel?.call() == true) {
           cancelled = true;
           break;
@@ -295,6 +364,7 @@ class FaceGroupingService {
             }
             scannedCount++;
             completedIdentities.add(identity);
+            scannedIdentities.add(identity);
           } on Object catch (error) {
             if (failedFiles.every(
               (failure) => !failure.startsWith(file.name),
@@ -319,6 +389,7 @@ class FaceGroupingService {
           aliases,
           pendingReview: pendingReview,
           manualOverrides: manualOverrides,
+          scannedIdentities: scannedIdentities,
         );
         await _writeScanCheckpoint(scanScope, completedIdentities);
         onProgress(completedIdentities.length, media.length);
@@ -378,6 +449,18 @@ class FaceGroupingService {
       index.pendingReview,
     );
   }
+
+  Future<bool> automaticScanEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_automaticScanKey) ?? true;
+  }
+
+  Future<void> setAutomaticScanEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_automaticScanKey, enabled);
+  }
+
+  Future<bool> isDeviceCharging() => TdlibService.instance.isDeviceCharging();
 
   Future<List<TCloudFile>> loadAllLibraryMedia() async {
     final repository = TCloudRepository.instance;
@@ -572,6 +655,7 @@ class FaceGroupingService {
         aliases: <String, String>{},
         pendingReview: <String>{},
         manualOverrides: <String, Set<String>>{},
+        scannedIdentities: <String>{},
       );
     }
 
@@ -584,10 +668,12 @@ class FaceGroupingService {
     final rawAliases = decoded['aliases'];
     final rawPendingReview = decoded['pendingReview'];
     final rawManualOverrides = decoded['manualOverrides'];
+    final rawScannedIdentities = decoded['scannedIdentities'];
     if (rawAssociations is! Map<String, dynamic> ||
         rawNames is! Map<String, dynamic> ||
         (rawAliases != null && rawAliases is! Map<String, dynamic>) ||
         (rawPendingReview != null && rawPendingReview is! List) ||
+        (rawScannedIdentities != null && rawScannedIdentities is! List) ||
         (rawManualOverrides != null &&
             rawManualOverrides is! Map<String, dynamic>)) {
       throw const FormatException('Indice local de rostos invalido.');
@@ -628,6 +714,11 @@ class FaceGroupingService {
                 people.map((id) => id.toString()).toSet(),
               );
             }),
+      scannedIdentities:
+          (rawScannedIdentities as List?)
+              ?.map((identity) => identity.toString())
+              .toSet() ??
+          <String>{},
     );
   }
 
@@ -637,7 +728,10 @@ class FaceGroupingService {
     Map<String, String> aliases, {
     Set<String> pendingReview = const <String>{},
     Map<String, Set<String>> manualOverrides = const <String, Set<String>>{},
+    Set<String>? scannedIdentities,
   }) async {
+    final retainedScannedIdentities =
+        scannedIdentities ?? (await _readIndex()).scannedIdentities;
     final file = await _indexFile();
     await file.parent.create(recursive: true);
     await file.writeAsString(
@@ -647,6 +741,7 @@ class FaceGroupingService {
         'aliases': aliases,
         'pendingReview': pendingReview.toList(),
         'manualOverrides': _encodeAssociations(manualOverrides),
+        'scannedIdentities': retainedScannedIdentities.toList(),
       }),
       flush: true,
     );

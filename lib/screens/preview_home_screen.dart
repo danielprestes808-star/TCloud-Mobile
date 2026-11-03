@@ -19,6 +19,7 @@ import '../models/tcloud_transfer.dart';
 import '../services/gallery_sync_service.dart';
 import '../services/tcloud_repository.dart';
 import '../services/account_service.dart';
+import '../services/face_grouping_service.dart';
 import '../services/transfer_center.dart';
 import '../services/thumbnail_cache_service.dart';
 import '../telegram/tdlib_service.dart';
@@ -62,6 +63,15 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   bool _loadingFolders = true;
   String? _mediaLoadError;
   bool _syncingGallery = false;
+  bool _galleryBackupEnabled = false;
+  int _galleryBackupPending = 0;
+  int _galleryBackupFailed = 0;
+  String? _galleryBackupError;
+  bool _autoFaceScanRunning = false;
+  bool _autoFaceCharging = false;
+  bool _autoFaceAutomaticEnabled = true;
+  String? _autoFaceScanStatus;
+  Timer? _autoFaceChargeMonitor;
   final bool _loadingFullAlbum = false;
   String _selectedFolderKey = 'all';
   String _deviceSpace = 'all';
@@ -75,8 +85,12 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   String _homeFilesSort = 'Mais recentes';
   int _homeGridColumns = 3;
   bool _hideHomePreviews = false;
+  bool _welcomeHintVisible = false;
   String _homeDateFilter = 'Qualquer data';
   String _homeSizeFilter = 'Qualquer tamanho';
+  String? _homePersonFilterId;
+  String? _homePersonFilterName;
+  Set<String> _homePersonFileIdentities = <String>{};
   List<String> _homeSearchHistory = <String>[];
   Set<String> _resumableVideoIds = <String>{};
   bool _showMediaSearch = false;
@@ -283,6 +297,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     _appInfoFuture = TCloudAppUpdateService.instance.currentAppInfo();
 
     unawaited(_loadHomeDisplayPreferences());
+    unawaited(_loadWelcomeHint());
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _checkForUpdatePopup();
@@ -307,11 +322,163 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         curve: Curves.easeInOutCubic,
       );
     });
+    _autoFaceChargeMonitor = Timer.periodic(const Duration(minutes: 1), (
+      _,
+    ) async {
+      if (!mounted) return;
+      try {
+        if (!await FaceGroupingService.instance.automaticScanEnabled()) {
+          return;
+        }
+        _autoFaceCharging = await FaceGroupingService.instance
+            .isDeviceCharging();
+      } on Object catch (error) {
+        _autoFaceCharging = false;
+        if (mounted) {
+          setState(
+            () => _autoFaceScanStatus = 'Falha ao verificar a carga: $error',
+          );
+        }
+        return;
+      }
+      if (!mounted || _autoFaceScanRunning || !_autoFaceCharging) return;
+      unawaited(_runAutomaticFaceRecognition());
+    });
 
     _loadEverything().then((_) async {
       await _consumeSharedFiles();
       await _autoSyncGallery();
     });
+    unawaited(_refreshBackupOverview());
+  }
+
+  Future<void> _refreshBackupOverview() async {
+    try {
+      final enabled = await _sync.isEnabled();
+      final snapshot = await _sync.syncActivitySnapshot();
+      final lastError = await _sync.lastBackupError();
+      if (!mounted) return;
+      setState(() {
+        _galleryBackupEnabled = enabled;
+        _galleryBackupPending = _asInt(snapshot['pendingNative']);
+        _galleryBackupFailed = _asInt(snapshot['failed']);
+        _galleryBackupError = lastError;
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(
+        () =>
+            _galleryBackupError = 'Não foi possível atualizar o backup: $error',
+      );
+    }
+  }
+
+  Future<void> _loadWelcomeHint() async {
+    final prefs = await SharedPreferences.getInstance();
+    final dismissed = prefs.getBool('tcloud:home-welcome-hint-v1') ?? false;
+    if (mounted) setState(() => _welcomeHintVisible = !dismissed);
+  }
+
+  Future<void> _dismissWelcomeHint() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('tcloud:home-welcome-hint-v1', true);
+    if (mounted) setState(() => _welcomeHintVisible = false);
+  }
+
+  int _asInt(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  Widget _backupOverviewCard() {
+    if (!_galleryBackupEnabled) return const SizedBox.shrink();
+    final message = _syncingGallery
+        ? 'Sincronizando fotos e vídeos agora.'
+        : _galleryBackupFailed > 0
+        ? '$_galleryBackupFailed arquivo(s) com falha.'
+        : _galleryBackupPending > 0
+        ? '$_galleryBackupPending arquivo(s) aguardando envio.'
+        : 'Suas novas mídias estão protegidas.';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+      child: Card(
+        child: ListTile(
+          leading: Icon(
+            _galleryBackupFailed > 0
+                ? Icons.cloud_off_outlined
+                : Icons.cloud_done_outlined,
+            color: _galleryBackupFailed > 0
+                ? Theme.of(context).colorScheme.error
+                : TCloudTheme.primary,
+          ),
+          title: const Text(
+            'Backup da galeria',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          subtitle: Text(
+            _galleryBackupError == null || _galleryBackupError!.isEmpty
+                ? message
+                : '$message ${_galleryBackupError!}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: TextButton(
+            onPressed: _syncingGallery ? null : () => _runGallerySync(),
+            child: Text(_galleryBackupFailed > 0 ? 'Tentar' : 'Sincronizar'),
+          ),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const SyncQueueScreen()),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _welcomeHintCard() {
+    if (!_welcomeHintVisible) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+          child: Row(
+            children: [
+              Icon(Icons.lightbulb_outline_rounded, color: TCloudTheme.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Bem-vindo ao TCloud',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Fotos, Arquivos, Pessoas e Transferências ficam na barra inferior.',
+                      style: TextStyle(
+                        color: TCloudTheme.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _showNavigationGuide,
+                      child: const Text('Ver guia rápido'),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Dispensar dica',
+                onPressed: _dismissWelcomeHint,
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _loadHomeDisplayPreferences() async {
@@ -430,6 +597,18 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                         ),
                     ],
                   ),
+                  const SizedBox(height: 12),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.face_retouching_natural_outlined),
+                    title: const Text('Filtrar por pessoa'),
+                    subtitle: Text(_homePersonFilterName ?? 'Qualquer pessoa'),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () {
+                      Navigator.pop(context);
+                      unawaited(_selectHomePersonFilter());
+                    },
+                  ),
                   const SizedBox(height: 18),
                   SizedBox(
                     width: double.infinity,
@@ -447,10 +626,71 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     );
   }
 
+  Future<void> _selectHomePersonFilter() async {
+    try {
+      final groups = await FaceGroupingService.instance.groupsFor(_allFiles);
+      if (!mounted) return;
+      final selected = await showModalBottomSheet<String>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(sheetContext).height * .65,
+            child: ListView(
+              children: [
+                const ListTile(
+                  title: Text(
+                    'Escolha uma pessoa',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.people_outline_rounded),
+                  title: const Text('Qualquer pessoa'),
+                  onTap: () => Navigator.pop(sheetContext, '*'),
+                ),
+                for (final group in groups)
+                  ListTile(
+                    leading: const Icon(Icons.face_outlined),
+                    title: Text(group.name),
+                    subtitle: Text('${group.files.length} mídias'),
+                    onTap: () => Navigator.pop(sheetContext, group.id),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+      if (selected == null || !mounted) return;
+      if (selected == '*') {
+        setState(() {
+          _homePersonFilterId = null;
+          _homePersonFilterName = null;
+          _homePersonFileIdentities = <String>{};
+        });
+        return;
+      }
+      final group = groups.firstWhere((item) => item.id == selected);
+      setState(() {
+        _homePersonFilterId = group.id;
+        _homePersonFilterName = group.name;
+        _homePersonFileIdentities = group.files
+            .map((file) => file.contentIdentity)
+            .toSet();
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Não foi possível carregar as pessoas: $error')),
+      );
+    }
+  }
+
   @override
   void dispose() {
     _stopMediaDragAutoScroll();
     _recentCarouselTimer?.cancel();
+    _autoFaceChargeMonitor?.cancel();
     _recentCarouselController.dispose();
     _folderSearchController.dispose();
     _mediaScrollController.dispose();
@@ -464,6 +704,9 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
       Future<void>(() async {
         await _consumeSharedFiles();
         await _autoSyncGallery();
+        if (_folders.isEmpty || !await _sync.isEnabled()) {
+          await _loadMedia();
+        }
         final lastCheck = _lastUpdateCheckAt;
         if (lastCheck == null ||
             DateTime.now().difference(lastCheck) > const Duration(hours: 6)) {
@@ -548,6 +791,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     final folders = uniqueFolders.values.toList();
     final collected = <String, TCloudFile>{};
     final allCollected = <String, TCloudFile>{};
+    Timer? publishTimer;
 
     void collect(Iterable<TCloudFile> files) {
       for (final file in files) {
@@ -556,8 +800,17 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
       }
     }
 
-    void publish() {
+    void publish({bool immediate = false}) {
       if (!mounted || generation != _mediaLoadGeneration) return;
+      if (!immediate) {
+        if (publishTimer?.isActive ?? false) return;
+        publishTimer = Timer(
+          const Duration(milliseconds: 250),
+          () => publish(immediate: true),
+        );
+        return;
+      }
+      publishTimer?.cancel();
       final sorted = collected.values.toList()
         ..sort((a, b) {
           final d = b.createdAt.compareTo(a.createdAt);
@@ -613,6 +866,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
       await Future<void>.delayed(Duration.zero);
     }
 
+    publish(immediate: true);
     if (mounted &&
         generation == _mediaLoadGeneration &&
         failedFolders.isNotEmpty) {
@@ -622,6 +876,71 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
             'Não foi possível carregar ${count == 1 ? 'uma pasta' : '$count pastas'} '
             '(${failedFolders.take(3).join(', ')}). Puxe para atualizar.';
       });
+    }
+
+    if (generation == _mediaLoadGeneration) {
+      unawaited(_runAutomaticFaceRecognition());
+    }
+  }
+
+  Future<void> _runAutomaticFaceRecognition() async {
+    if (_autoFaceScanRunning ||
+        _selectedFolderKey != 'all' ||
+        _deviceSpace != 'all' ||
+        !await FaceGroupingService.instance.automaticScanEnabled()) {
+      return;
+    }
+    try {
+      _autoFaceCharging = await FaceGroupingService.instance.isDeviceCharging();
+    } on Object catch (error) {
+      _autoFaceCharging = false;
+      if (mounted) {
+        setState(
+          () => _autoFaceScanStatus = 'Falha ao verificar a carga: $error',
+        );
+      }
+      return;
+    }
+    if (!_autoFaceCharging) {
+      if (mounted) {
+        setState(() {
+          _autoFaceScanStatus =
+              'A análise automática começa quando o telefone estiver carregando.';
+        });
+      }
+      return;
+    }
+
+    final media = _allFiles
+        .where((file) => file.isImage || file.isVideo)
+        .toList(growable: false);
+    if (media.isEmpty || !mounted) return;
+
+    _autoFaceScanRunning = true;
+    setState(() => _autoFaceScanStatus = 'Analisando fotos e vídeos…');
+    try {
+      final result = await FaceGroupingService.instance.analyze(
+        media,
+        onProgress: (_, _) {},
+        shouldPause: () => !_autoFaceCharging || !_autoFaceAutomaticEnabled,
+        scanScope: 'library',
+      );
+      if (!mounted) return;
+      setState(() {
+        _autoFaceScanStatus = result.paused
+            ? !_autoFaceAutomaticEnabled
+                  ? 'Reconhecimento automático pausado nas configurações.'
+                  : 'Análise pausada até o telefone voltar a carregar.'
+            : result.failedFiles.isEmpty
+            ? 'Reconhecimento atualizado: ${result.scannedCount} nova(s) mídia(s) analisada(s).'
+            : 'Reconhecimento atualizado com ${result.failedFiles.length} mídia(s) que precisam ser tentadas novamente.';
+      });
+    } on Object catch (error) {
+      _autoFaceCharging = false;
+      if (!mounted) return;
+      setState(() => _autoFaceScanStatus = 'Falha no reconhecimento: $error');
+    } finally {
+      _autoFaceScanRunning = false;
     }
   }
 
@@ -1637,6 +1956,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     } finally {
       if (mounted) {
         setState(() => _syncingGallery = false);
+        unawaited(_refreshBackupOverview());
       }
     }
   }
@@ -1644,7 +1964,10 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   Future<void> _configureGallerySync(bool enabled) async {
     if (!enabled) {
       await _sync.setEnabled(false);
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {});
+        unawaited(_refreshBackupOverview());
+      }
       return;
     }
     final permission = await TdlibService.instance.requestMediaPermission();
@@ -1683,6 +2006,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     await _sync.setEnabled(true);
     if (!mounted) return;
     setState(() {});
+    unawaited(_refreshBackupOverview());
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text(
@@ -2790,7 +3114,10 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                   1,
             _ => true,
           };
-          return dateMatches && sizeMatches && typeMatches;
+          final personMatches =
+              _homePersonFilterId == null ||
+              _homePersonFileIdentities.contains(file.contentIdentity);
+          return dateMatches && sizeMatches && typeMatches && personMatches;
         }).toList()..sort(
           (a, b) => switch (_homeFilesSort) {
             'Nome' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
@@ -2812,6 +3139,11 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
 
     return Column(
       children: [
+        _welcomeHintCard(),
+        if (_currentIndex == 0 &&
+            _deviceSpace == 'all' &&
+            _selectedFolderKey == 'all')
+          _backupOverviewCard(),
         if (_mediaLoadError != null)
           Material(
             color: Theme.of(context).colorScheme.errorContainer,
@@ -2892,7 +3224,8 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                       icon: Badge(
                         isLabelVisible:
                             _homeDateFilter != 'Qualquer data' ||
-                            _homeSizeFilter != 'Qualquer tamanho',
+                            _homeSizeFilter != 'Qualquer tamanho' ||
+                            _homePersonFilterId != null,
                         child: const Icon(Icons.tune_rounded),
                       ),
                     ),
@@ -3875,6 +4208,46 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     );
   }
 
+  Future<void> _showNavigationGuide() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Encontre tudo no TCloud'),
+        content: const SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Fotos: veja imagens e vídeos por data e pesquise na galeria.',
+              ),
+              SizedBox(height: 12),
+              Text('Arquivos: navegue pelas pastas e abra documentos.'),
+              SizedBox(height: 12),
+              Text(
+                'Pessoas: encontre grupos de rostos reconhecidos no aparelho.',
+              ),
+              SizedBox(height: 12),
+              Text(
+                'Transferências: acompanhe o backup e tente novamente arquivos com falha.',
+              ),
+              SizedBox(height: 12),
+              Text(
+                'Ajustes: controle backup, reconhecimento, aparência e espaço.',
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Entendi'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _settingsPage() {
     Widget section(String title, List<Widget> children) => Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
@@ -3919,6 +4292,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         BiometricLockService.instance.isEnabled(),
         BiometricLockService.instance.timeoutSeconds(),
         _libraryPrefs.documentProviderEnabled(),
+        FaceGroupingService.instance.automaticScanEnabled(),
       ]),
       builder: (context, snapshot) {
         final v =
@@ -3950,6 +4324,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
           _ => 'Após 8 segundos',
         };
         final documentProviderEnabled = v.length > 11 && v[11] == true;
+        final automaticFaceScan = v.length > 12 && v[12] == true;
         return ListView(
           padding: const EdgeInsets.only(top: 8, bottom: 120),
           children: [
@@ -4003,6 +4378,40 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 ),
               ),
             ),
+            section('FOTOS E PESSOAS', [
+              SwitchListTile(
+                secondary: const Icon(Icons.face_retouching_natural_outlined),
+                title: const Text('Reconhecer rostos automaticamente'),
+                subtitle: Text(
+                  _autoFaceScanStatus ??
+                      'Analisa a biblioteca e novas mídias neste aparelho enquanto ele carrega. Downloads temporários podem usar dados móveis.',
+                ),
+                value: automaticFaceScan,
+                onChanged: (enabled) async {
+                  await FaceGroupingService.instance.setAutomaticScanEnabled(
+                    enabled,
+                  );
+                  if (!mounted) return;
+                  _autoFaceAutomaticEnabled = enabled;
+                  setState(() {
+                    _autoFaceScanStatus = enabled
+                        ? 'Aguardando uma atualização da biblioteca enquanto o telefone carrega.'
+                        : 'O reconhecimento automático está pausado.';
+                  });
+                  if (enabled) unawaited(_runAutomaticFaceRecognition());
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.menu_book_outlined),
+                title: const Text('Como navegar no TCloud'),
+                subtitle: const Text(
+                  'Entenda Fotos, Arquivos, Pessoas e Transferências.',
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: _showNavigationGuide,
+              ),
+            ]),
             section('ESTE TELEFONE', [
               SwitchListTile(
                 secondary: const Icon(Icons.backup_outlined),

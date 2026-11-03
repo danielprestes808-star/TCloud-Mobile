@@ -143,6 +143,34 @@ void main() {
     expect(after.single.needsReview, isFalse);
   });
 
+  test('automatic scans skip completed media and retain that record', () async {
+    await _writeIndex(documentsDirectory, <String, Object>{
+      'associations': <String, List<String>>{},
+      'names': <String, String>{},
+      'scannedIdentities': <String>['10:0:1'],
+    });
+
+    final result = await service.analyze(
+      <TCloudFile>[_file(1)],
+      onProgress: (_, _) {},
+      scanScope: 'library',
+    );
+
+    expect(result.scannedCount, 0);
+    expect(result.failedFiles, isEmpty);
+
+    await service.renameGroup('person_missing', 'Renamed');
+    final storedIndex =
+        jsonDecode(
+              await File(
+                '${documentsDirectory.path}${Platform.pathSeparator}'
+                'tcloud_face_groups_v1.json',
+              ).readAsString(),
+            )
+            as Map<String, dynamic>;
+    expect(storedIndex['scannedIdentities'], <String>['10:0:1']);
+  });
+
   test('video sampling spaces frames and caps long videos', () {
     expect(FaceGroupingService.videoFrameTimestampsMs(0), <int>[1_000]);
     expect(FaceGroupingService.videoFrameTimestampsMs(25), <int>[

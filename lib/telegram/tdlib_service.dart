@@ -171,6 +171,9 @@ class TdlibService {
         const <String, dynamic>{};
   }
 
+  Future<bool> isDeviceCharging() async =>
+      await _methods.invokeMethod<bool>('isDeviceCharging') ?? false;
+
   Future<void> requestIgnoreBatteryOptimizations() async {
     await _methods.invokeMethod<bool>('requestIgnoreBatteryOptimizations');
   }
