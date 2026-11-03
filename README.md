@@ -18,7 +18,7 @@ flutter run
 - Cada origem mantém seu próprio cursor, evitando repetição ou perda de páginas antigas.
 - O primeiro carregamento válido é armazenado em cache; falhas transitórias não apagam arquivos já descobertos.
 
-Versão atual: **1.1.44+125**.
+Versão atual: **1.1.45+126**.
 
 A galeria oferece agrupamento facial local por álbum ou biblioteca. A análise
 inclui fotos e amostras de vídeos (um quadro a cada cerca de 10 segundos, até 12
@@ -35,6 +35,8 @@ A navegação principal separa **Fotos**, organizadas por data, de **Arquivos**,
 com pastas, filtros e opções de visualização. Pessoas, transferências e ajustes
 continuam disponíveis na barra inferior; arquivos offline e pastas do telefone
 ou computador ficam acessíveis pelas opções de Arquivos.
+Fotos carrega todas as páginas do histórico do Telegram em todas as pastas,
+incluindo vídeos, e informa quando alguma pasta não pôde ser atualizada.
 
 Para gerar um APK que atualize tanto as instalacoes debug antigas quanto as
 releases oficiais, execute primeiro `flutter build apk --release` e depois

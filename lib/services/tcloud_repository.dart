@@ -933,6 +933,57 @@ class TCloudRepository {
     return result;
   }
 
+  Future<List<TCloudFile>> loadAllFiles(
+    TCloudFolder folder, {
+    int pageSize = 100,
+    void Function(TCloudFilePage page)? onPage,
+  }) async {
+    final filesByIdentity = <String, TCloudFile>{};
+    var fromMessageId = 0;
+    var fromMessageIds = <String, int>{};
+    final seenCursors = <String>{};
+
+    while (true) {
+      final page = await loadFilePage(
+        folder,
+        fromMessageId: fromMessageId,
+        fromMessageIds: fromMessageIds,
+        limit: pageSize,
+      );
+      onPage?.call(page);
+
+      for (final file in page.files) {
+        final current = filesByIdentity[file.contentIdentity];
+        if (current == null || _preferMediaCandidate(file, current)) {
+          filesByIdentity[file.contentIdentity] = file;
+        }
+      }
+
+      if (!page.hasMore) break;
+
+      final nextCursors = page.nextFromMessageIds;
+      final cursorState =
+          (nextCursors.entries.toList()..sort((a, b) => a.key.compareTo(b.key)))
+              .map((entry) => '${entry.key}:${entry.value}')
+              .join('|');
+      if (cursorState.isEmpty || !seenCursors.add(cursorState)) {
+        throw StateError(
+          'A paginação de "${folder.title}" não avançou. '
+          'Atualize a pasta e tente novamente.',
+        );
+      }
+
+      fromMessageId = page.nextFromMessageId;
+      fromMessageIds = nextCursors;
+    }
+
+    return filesByIdentity.values.toList()..sort((a, b) {
+      final byDate = b.createdAt.compareTo(a.createdAt);
+      if (byDate != 0) return byDate;
+      return b.messageId.compareTo(a.messageId);
+    });
+  }
+
   Future<TCloudFilePage> _loadFilePageSingleOrigin(
     TCloudFolder folder, {
     int fromMessageId = 0,

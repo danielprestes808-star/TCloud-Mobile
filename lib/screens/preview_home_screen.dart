@@ -60,6 +60,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   int _currentIndex = 0;
 
   bool _loadingFolders = true;
+  String? _mediaLoadError;
   bool _syncingGallery = false;
   final bool _loadingFullAlbum = false;
   String _selectedFolderKey = 'all';
@@ -527,8 +528,14 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
 
   Future<void> _loadMedia() async {
     final generation = ++_mediaLoadGeneration;
+    if (mounted) setState(() => _mediaLoadError = null);
     if (_folders.isEmpty) {
-      if (mounted) setState(() => _media = <TCloudFile>[]);
+      if (mounted) {
+        setState(() {
+          _media = <TCloudFile>[];
+          _allFiles = <TCloudFile>[];
+        });
+      }
       return;
     }
     final requested = _selectedFolderKey == 'all'
@@ -539,7 +546,6 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
       uniqueFolders.putIfAbsent(f.cacheKey, () => f);
     }
     final folders = uniqueFolders.values.toList();
-    final allFolders = _selectedFolderKey == 'all';
     final collected = <String, TCloudFile>{};
     final allCollected = <String, TCloudFile>{};
 
@@ -563,7 +569,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
           return d != 0 ? d : b.messageId.compareTo(a.messageId);
         });
       setState(() {
-        _media = sorted.take(allFolders ? 120 : 160).toList();
+        _media = sorted;
         _allFiles = allSorted;
       });
     }
@@ -582,32 +588,40 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
       publish();
     }
 
-    final liveFolders = allFolders ? folders.take(12).toList() : folders;
-    for (var offset = 0; offset < liveFolders.length; offset += 4) {
-      final end = (offset + 4).clamp(0, liveFolders.length);
-      final batch = liveFolders.sublist(offset, end);
-      final pages = await Future.wait(
+    final failedFolders = <String>{};
+    for (var offset = 0; offset < folders.length; offset += 4) {
+      final end = (offset + 4).clamp(0, folders.length);
+      final batch = folders.sublist(offset, end);
+      await Future.wait(
         batch.map((folder) async {
-          // TCLOUD_EXISTING_MEDIA_LIVE_REFRESH_1046
-          // O cache continua sendo fallback, mas nunca mais impede a consulta
-          // viva. Isso faz imagens/videos ja existentes no Telegram aparecerem
-          // mesmo quando a pasta foi carregada anteriormente com cache antigo.
           try {
-            return await _repo.loadFilePage(
+            await _repo.loadAllFiles(
               folder,
-              limit: allFolders ? 36 : 100,
+              onPage: (page) {
+                if (generation != _mediaLoadGeneration) return;
+                collect(page.files);
+                publish();
+              },
             );
           } catch (_) {
-            return null;
+            failedFolders.add(folder.title);
           }
         }),
       );
       if (generation != _mediaLoadGeneration) return;
-      for (final page in pages) {
-        if (page != null) collect(page.files);
-      }
       publish();
       await Future<void>.delayed(Duration.zero);
+    }
+
+    if (mounted &&
+        generation == _mediaLoadGeneration &&
+        failedFolders.isNotEmpty) {
+      final count = failedFolders.length;
+      setState(() {
+        _mediaLoadError =
+            'Não foi possível carregar ${count == 1 ? 'uma pasta' : '$count pastas'} '
+            '(${failedFolders.take(3).join(', ')}). Puxe para atualizar.';
+      });
     }
   }
 
@@ -2798,6 +2812,34 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
 
     return Column(
       children: [
+        if (_mediaLoadError != null)
+          Material(
+            color: Theme.of(context).colorScheme.errorContainer,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.cloud_off_outlined,
+                    color: Theme.of(context).colorScheme.onErrorContainer,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _mediaLoadError!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onErrorContainer,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _loadMedia,
+                    child: const Text('Tentar'),
+                  ),
+                ],
+              ),
+            ),
+          ),
         if (_loadingFullAlbum)
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 7, 14, 5),
