@@ -23,6 +23,19 @@ enum _SortMode { newest, name, size, type }
 
 enum _MediaFilter { all, images, videos }
 
+enum _FolderMenuAction {
+  groupByFace,
+  shareFolder,
+  shareSelected,
+  moveSelected,
+  deleteSelected,
+  downloadSelected,
+  sortNewest,
+  sortName,
+  sortSize,
+  sortType,
+}
+
 class FolderScreen extends StatefulWidget {
   const FolderScreen({super.key, required this.folder});
 
@@ -58,6 +71,7 @@ class _FolderScreenState extends State<FolderScreen> {
 
   String? _error;
   String _query = '';
+  final _searchController = TextEditingController();
 
   _ViewMode _viewMode = _ViewMode.list;
   _SortMode _sortMode = _SortMode.newest;
@@ -75,6 +89,7 @@ class _FolderScreenState extends State<FolderScreen> {
   @override
   void dispose() {
     _stopDragAutoScroll();
+    _searchController.dispose();
     _scrollController
       ..removeListener(_handleScroll)
       ..dispose();
@@ -774,6 +789,57 @@ class _FolderScreenState extends State<FolderScreen> {
     };
   }
 
+  void _handleFolderMenuAction(_FolderMenuAction action) {
+    switch (action) {
+      case _FolderMenuAction.groupByFace:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => FaceGroupsScreen(
+              folderTitle: widget.folder.title,
+              scanScope: widget.folder.cacheKey,
+              files: List<TCloudFile>.unmodifiable(_files),
+              loadAllFiles: _loadAllFilesForFaceGroups,
+            ),
+          ),
+        );
+        break;
+      case _FolderMenuAction.shareFolder:
+        _shareFolder();
+        break;
+      case _FolderMenuAction.shareSelected:
+        _shareSelected();
+        break;
+      case _FolderMenuAction.moveSelected:
+        _moveSelected();
+        break;
+      case _FolderMenuAction.deleteSelected:
+        _deleteSelected();
+        break;
+      case _FolderMenuAction.downloadSelected:
+        _downloadSelected();
+        break;
+      case _FolderMenuAction.sortNewest:
+        setState(() => _sortMode = _SortMode.newest);
+        break;
+      case _FolderMenuAction.sortName:
+        setState(() => _sortMode = _SortMode.name);
+        break;
+      case _FolderMenuAction.sortSize:
+        setState(() => _sortMode = _SortMode.size);
+        break;
+      case _FolderMenuAction.sortType:
+        setState(() => _sortMode = _SortMode.type);
+        break;
+    }
+  }
+
+  String get _sortLabel => switch (_sortMode) {
+    _SortMode.newest => 'Mais recentes',
+    _SortMode.name => 'Nome',
+    _SortMode.size => 'Tamanho',
+    _SortMode.type => 'Tipo',
+  };
+
   String _size(int bytes) {
     if (bytes < 1024) return '$bytes B';
 
@@ -1147,62 +1213,89 @@ class _FolderScreenState extends State<FolderScreen> {
                 icon: const Icon(Icons.select_all_outlined),
               ),
               IconButton(
-                tooltip: 'Compartilhar',
-                onPressed: _shareSelected,
-                icon: const Icon(Icons.share_outlined),
-              ),
-              IconButton(
-                tooltip: 'Mover',
-                onPressed: _moveSelected,
-                icon: const Icon(Icons.drive_file_move_outlined),
-              ),
-              IconButton(
                 tooltip: 'Excluir',
                 onPressed: _deleteSelected,
                 icon: const Icon(Icons.delete_outline),
               ),
-              IconButton(
-                tooltip: 'Disponivel offline',
-                onPressed: _downloadSelected,
-                icon: const Icon(Icons.offline_pin_outlined),
-              ),
-            ] else ...[
-              if (_hasMore || _files.any((file) => file.isImage))
-                IconButton(
-                  tooltip: 'Agrupar por rosto',
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => FaceGroupsScreen(
-                          folderTitle: widget.folder.title,
-                          scanScope: widget.folder.cacheKey,
-                          files: List<TCloudFile>.unmodifiable(_files),
-                          loadAllFiles: _loadAllFilesForFaceGroups,
-                        ),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.face_retouching_natural_outlined),
-                ),
-              IconButton(
-                tooltip: 'Compartilhar pasta',
-                onPressed: _shareFolder,
-                icon: const Icon(Icons.folder_shared_outlined),
-              ),
-              PopupMenuButton<_SortMode>(
-                tooltip: 'Ordenar',
-                initialValue: _sortMode,
-                onSelected: (mode) => setState(() => _sortMode = mode),
+              PopupMenuButton<_FolderMenuAction>(
+                tooltip: 'Mais ações para os itens',
+                onSelected: _handleFolderMenuAction,
                 itemBuilder: (_) => const [
                   PopupMenuItem(
-                    value: _SortMode.newest,
-                    child: Text('Mais recentes'),
+                    value: _FolderMenuAction.shareSelected,
+                    child: Text('Compartilhar'),
                   ),
-                  PopupMenuItem(value: _SortMode.name, child: Text('Nome')),
-                  PopupMenuItem(value: _SortMode.size, child: Text('Tamanho')),
-                  PopupMenuItem(value: _SortMode.type, child: Text('Tipo')),
+                  PopupMenuItem(
+                    value: _FolderMenuAction.moveSelected,
+                    child: Text('Mover para pasta'),
+                  ),
+                  PopupMenuItem(
+                    value: _FolderMenuAction.downloadSelected,
+                    child: Text('Disponibilizar offline'),
+                  ),
                 ],
-                icon: const Icon(Icons.sort),
+              ),
+            ] else ...[
+              PopupMenuButton<_FolderMenuAction>(
+                tooltip: 'Mais opções da pasta',
+                onSelected: _handleFolderMenuAction,
+                itemBuilder: (_) => [
+                  if (_hasMore ||
+                      _files.any((file) => file.isImage || file.isVideo))
+                    const PopupMenuItem(
+                      value: _FolderMenuAction.groupByFace,
+                      child: Text('Agrupar por rosto'),
+                    ),
+                  PopupMenuItem(
+                    value: _FolderMenuAction.shareFolder,
+                    child: Text('Compartilhar pasta'),
+                  ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
+                    enabled: false,
+                    child: Text('Ordenar por'),
+                  ),
+                  PopupMenuItem(
+                    value: _FolderMenuAction.sortNewest,
+                    child: Row(
+                      children: [
+                        const Expanded(child: Text('Mais recentes')),
+                        if (_sortMode == _SortMode.newest)
+                          const Icon(Icons.check, size: 18),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: _FolderMenuAction.sortName,
+                    child: Row(
+                      children: [
+                        const Expanded(child: Text('Nome')),
+                        if (_sortMode == _SortMode.name)
+                          const Icon(Icons.check, size: 18),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: _FolderMenuAction.sortSize,
+                    child: Row(
+                      children: [
+                        const Expanded(child: Text('Tamanho')),
+                        if (_sortMode == _SortMode.size)
+                          const Icon(Icons.check, size: 18),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: _FolderMenuAction.sortType,
+                    child: Row(
+                      children: [
+                        const Expanded(child: Text('Tipo')),
+                        if (_sortMode == _SortMode.type)
+                          const Icon(Icons.check, size: 18),
+                      ],
+                    ),
+                  ),
+                ],
               ),
               IconButton(
                 tooltip: _viewMode == _ViewMode.list ? 'Galeria' : 'Lista',
@@ -1246,7 +1339,7 @@ class _FolderScreenState extends State<FolderScreen> {
                     ),
                     const SizedBox(width: 8),
                     ChoiceChip(
-                      label: Text('Imagens ($imageCount)'),
+                      label: Text('Fotos ($imageCount)'),
                       selected: _mediaFilter == _MediaFilter.images,
                       onSelected: (_) =>
                           setState(() => _mediaFilter = _MediaFilter.images),
@@ -1261,71 +1354,43 @@ class _FolderScreenState extends State<FolderScreen> {
                   ],
                 ),
               ),
-            if (_viewMode == _ViewMode.list)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-                child: TextField(
-                  onChanged: (value) => setState(() => _query = value),
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.search),
-                    hintText: 'Pesquisar nesta pasta',
-                  ),
-                ),
-              )
-            else
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 5),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        onChanged: (value) => setState(() => _query = value),
-                        decoration: const InputDecoration(
-                          prefixIcon: Icon(Icons.search),
-                          hintText: 'Pesquisar',
-                          isDense: true,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (value) => setState(() => _query = value),
+                decoration: InputDecoration(
+                  isDense: true,
+                  prefixIcon: const Icon(Icons.search),
+                  hintText: 'Pesquisar nesta pasta',
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Limpar busca',
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _query = '');
+                          },
+                          icon: const Icon(Icons.close),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: TCloudTheme.surface,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: TCloudTheme.border),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 12,
-                        ),
-                        child: Text(
-                          '${visible.length}',
-                          style: TextStyle(
-                            color: TCloudTheme.textSecondary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
                 ),
               ),
-            if (_viewMode == _ViewMode.list)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '${visible.length} item(ns) carregado(s)'
-                    '${_hasMore ? ' \u2022 mais disponiveis' : ''}',
-                    style: TextStyle(
-                      color: TCloudTheme.textSecondary,
-                      fontSize: 11,
-                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '${visible.length} ${_query.isEmpty ? 'itens' : 'resultados'}'
+                  '${_hasMore ? ' · role para carregar mais' : ''}'
+                  ' · $_sortLabel',
+                  style: TextStyle(
+                    color: TCloudTheme.textSecondary,
+                    fontSize: 11,
                   ),
                 ),
               ),
+            ),
             if (_refreshing) const LinearProgressIndicator(minHeight: 2),
             Expanded(
               child: _loading
@@ -1343,15 +1408,33 @@ class _FolderScreenState extends State<FolderScreen> {
                             size: 48,
                             color: TCloudTheme.textSecondary,
                           ),
-                          SizedBox(height: 12),
+                          const SizedBox(height: 12),
                           Center(
                             child: Text(
-                              'Nenhum arquivo nesta pasta.',
+                              _query.isNotEmpty
+                                  ? 'Nenhum resultado para esta busca.'
+                                  : _mediaFilter != _MediaFilter.all
+                                  ? 'Nenhum item neste filtro.'
+                                  : 'Nenhum arquivo nesta pasta.',
                               style: TextStyle(
                                 color: TCloudTheme.textSecondary,
                               ),
                             ),
                           ),
+                          if (_query.isNotEmpty ||
+                              _mediaFilter != _MediaFilter.all)
+                            Center(
+                              child: TextButton(
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() {
+                                    _query = '';
+                                    _mediaFilter = _MediaFilter.all;
+                                  });
+                                },
+                                child: const Text('Limpar busca e filtros'),
+                              ),
+                            ),
                         ],
                       ),
                     )

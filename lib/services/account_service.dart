@@ -3,7 +3,12 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class TCloudAccount {
-  const TCloudAccount({required this.id, required this.label, this.displayName, this.username});
+  const TCloudAccount({
+    required this.id,
+    required this.label,
+    this.displayName,
+    this.username,
+  });
   final String id;
   final String label;
   final String? displayName;
@@ -65,9 +70,7 @@ class AccountService {
         .toList();
     await prefs.setString(
       _accountsKey,
-      jsonEncode(
-        updated.map(_encode).toList(),
-      ),
+      jsonEncode(updated.map(_encode).toList()),
     );
   }
 
@@ -76,10 +79,7 @@ class AccountService {
     final prefs = await SharedPreferences.getInstance();
     final list = await accounts();
     list.add(TCloudAccount(id: id, label: 'Nova conta'));
-    await prefs.setString(
-      _accountsKey,
-      jsonEncode(list.map(_encode).toList()),
-    );
+    await prefs.setString(_accountsKey, jsonEncode(list.map(_encode).toList()));
     await prefs.setString(_activeKey, id);
     return id;
   }
@@ -101,24 +101,42 @@ class AccountService {
     return (await accounts()).firstWhere((item) => item.id == id);
   }
 
-  Future<bool> profileComplete() async => (await activeAccount()).profileComplete;
+  Future<bool> profileComplete() async =>
+      (await activeAccount()).profileComplete;
 
   Future<TCloudAccount> saveProfile(String rawName, String rawUsername) async {
     final name = rawName.trim().replaceAll(RegExp(r'\s+'), ' ');
-    final username = rawUsername.trim().replaceFirst(RegExp(r'^@+'), '').toLowerCase();
+    final username = rawUsername
+        .trim()
+        .replaceFirst(RegExp(r'^@+'), '')
+        .toLowerCase();
     if (name.length < 2 || name.length > 60) {
       throw StateError('Informe um nome entre 2 e 60 caracteres.');
     }
     if (!RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(username)) {
-      throw StateError('Use de 3 a 32 letras, números ou _ no nome de usuário.');
+      throw StateError(
+        'Use de 3 a 32 letras, números ou _ no nome de usuário.',
+      );
     }
     final prefs = await SharedPreferences.getInstance();
     final active = await activeId();
     final list = await accounts();
-    final updated = list.map((item) => item.id == active
-        ? TCloudAccount(id: item.id, label: item.label, displayName: name, username: username)
-        : item).toList();
-    await prefs.setString(_accountsKey, jsonEncode(updated.map(_encode).toList()));
+    final updated = list
+        .map(
+          (item) => item.id == active
+              ? TCloudAccount(
+                  id: item.id,
+                  label: item.label,
+                  displayName: name,
+                  username: username,
+                )
+              : item,
+        )
+        .toList();
+    await prefs.setString(
+      _accountsKey,
+      jsonEncode(updated.map(_encode).toList()),
+    );
     return updated.firstWhere((item) => item.id == active);
   }
 }
