@@ -124,7 +124,9 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
   }
 
   TCloudFile? _mediaAtGlobalPosition(Offset globalPosition) {
-    for (final file in _media) {
+    for (final file in _allFiles.where(
+      (file) => _homeVisibleFileIds.contains(file.fileId),
+    )) {
       final key = _mediaDragTileKeys[_mediaDragIdentity(file)];
 
       final context = key?.currentContext;
@@ -2634,7 +2636,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
       '',
       'janeiro',
       'fevereiro',
-      'marco',
+      'março',
       'abril',
       'maio',
       'junho',
@@ -2655,12 +2657,16 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
 
   List<TCloudFile> get _visibleMedia {
     final query = _mediaQuery.trim().toLowerCase();
+    final cataloguedMedia = _allFiles.where((file) => file.isMedia).toList();
+    final media = cataloguedMedia.isEmpty && _allFiles.isEmpty
+        ? _media
+        : cataloguedMedia;
 
     if (query.isEmpty) {
-      return _media;
+      return media;
     }
 
-    return _media.where((file) {
+    return media.where((file) {
       final haystack = '${file.name} ${file.kind} ${file.mimeType ?? ''}'
           .toLowerCase();
 
@@ -2668,10 +2674,10 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     }).toList();
   }
 
-  Map<String, List<TCloudFile>> _groupVisibleMedia() {
+  Map<String, List<TCloudFile>> _groupVisibleMedia(List<TCloudFile> files) {
     final groups = <String, List<TCloudFile>>{};
 
-    for (final file in _visibleMedia) {
+    for (final file in files) {
       final label = _mediaDateLabel(file);
 
       groups.putIfAbsent(label, () => <TCloudFile>[]).add(file);
@@ -2715,15 +2721,80 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
     await _loadMedia();
   }
 
-  // ignore: unused_element
   Widget _mediaPage() {
     if (_loadingFolders && _folders.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final visible = _visibleMedia;
-    final groups = _groupVisibleMedia();
+    final duplicateKeys = <String, int>{};
+    for (final file in _allFiles) {
+      final key = '${file.name.trim().toLowerCase()}:${file.size}';
+      duplicateKeys[key] = (duplicateKeys[key] ?? 0) + 1;
+    }
+    final visible =
+        _visibleMedia.where((file) {
+          final date = file.createdAt > 0
+              ? DateTime.fromMillisecondsSinceEpoch(
+                  file.createdAt * 1000,
+                ).toLocal()
+              : null;
+          final now = DateTime.now();
+          final dateMatches = switch (_homeDateFilter) {
+            'Hoje' =>
+              date != null &&
+                  date.year == now.year &&
+                  date.month == now.month &&
+                  date.day == now.day,
+            'Últimos 7 dias' =>
+              date != null && now.difference(date).inDays <= 7,
+            'Últimos 30 dias' =>
+              date != null && now.difference(date).inDays <= 30,
+            'Este ano' => date != null && date.year == now.year,
+            _ => true,
+          };
+          const mb = 1024 * 1024;
+          final sizeMatches = switch (_homeSizeFilter) {
+            'Até 10 MB' => file.size <= 10 * mb,
+            '10 a 100 MB' => file.size > 10 * mb && file.size <= 100 * mb,
+            'Mais de 100 MB' => file.size > 100 * mb,
+            _ => true,
+          };
+          final typeMatches = switch (_homeFilesFilter) {
+            'Fotos' => file.isImage,
+            'Vídeos' => file.isVideo,
+            'Favoritos' => _favorites.contains(file.contentIdentity),
+            'Offline' => _offline.any(
+              (item) => item.contentIdentity == file.contentIdentity,
+            ),
+            'Capturas' =>
+              file.isImage &&
+                  (file.name.toLowerCase().contains('screenshot') ||
+                      file.name.toLowerCase().contains('captura de tela')),
+            'Duplicados' =>
+              (duplicateKeys['${file.name.trim().toLowerCase()}:${file.size}'] ??
+                      0) >
+                  1,
+            _ => true,
+          };
+          return dateMatches && sizeMatches && typeMatches;
+        }).toList()..sort(
+          (a, b) => switch (_homeFilesSort) {
+            'Nome' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+            'Maior tamanho' => b.size.compareTo(a.size),
+            'Mais antigos' => a.createdAt.compareTo(b.createdAt),
+            _ => b.createdAt.compareTo(a.createdAt),
+          },
+        );
+    _homeVisibleFileIds = visible.map((file) => file.fileId).toSet();
+    final groups = _groupVisibleMedia(visible);
     final entries = groups.entries.toList();
+    final continueWatching = visible
+        .where(
+          (file) =>
+              file.isVideo && _resumableVideoIds.contains(file.syncIdentity),
+        )
+        .take(10)
+        .toList();
 
     return Column(
       children: [
@@ -2740,7 +2811,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 const SizedBox(width: 9),
                 Expanded(
                   child: Text(
-                    'Carregando todo o album... '
+                    'Carregando todo o álbum... '
                     '${_media.length} item(ns)',
                     style: TextStyle(
                       color: TCloudTheme.textSecondary,
@@ -2758,25 +2829,186 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
             child: TextField(
               autofocus: true,
+              controller: _folderSearchController,
               onChanged: (value) {
-                setState(() => _mediaQuery = value);
+                setState(() {
+                  _mediaQuery = value;
+                  _folderQuery = value.trim();
+                });
               },
+              onSubmitted: _rememberHomeSearch,
               decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.search),
-                hintText: 'Pesquisar fotos e videos',
+                prefixIcon: const Icon(Icons.search_rounded),
+                hintText: 'Pesquisar fotos e vídeos',
                 isDense: true,
-                suffixIcon: _mediaQuery.isEmpty
-                    ? null
-                    : IconButton(
+                suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: 'Filtrar por período e tamanho',
+                      onPressed: _showHomeSearchFilters,
+                      icon: Badge(
+                        isLabelVisible:
+                            _homeDateFilter != 'Qualquer data' ||
+                            _homeSizeFilter != 'Qualquer tamanho',
+                        child: const Icon(Icons.tune_rounded),
+                      ),
+                    ),
+                    if (_mediaQuery.isNotEmpty)
+                      IconButton(
                         tooltip: 'Limpar pesquisa',
                         onPressed: () {
-                          setState(() => _mediaQuery = '');
+                          _folderSearchController.clear();
+                          setState(() {
+                            _mediaQuery = '';
+                            _folderQuery = '';
+                          });
                         },
-                        icon: const Icon(Icons.close),
+                        icon: const Icon(Icons.close_rounded),
                       ),
+                  ],
+                ),
               ),
             ),
           ),
+        SizedBox(
+          height: 54,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            children: [
+              for (final filter in const [
+                'Todos',
+                'Fotos',
+                'Vídeos',
+                'Favoritos',
+                'Offline',
+              ])
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    label: Text(filter),
+                    selected: _homeFilesFilter == filter,
+                    onSelected: (_) =>
+                        setState(() => _homeFilesFilter = filter),
+                  ),
+                ),
+              PopupMenuButton<String>(
+                tooltip: 'Mais filtros e opções',
+                onSelected: (value) {
+                  if (value.startsWith('filter:')) {
+                    setState(() => _homeFilesFilter = value.substring(7));
+                  } else if (value.startsWith('sort:')) {
+                    _setHomeFilesSort(value.substring(5));
+                  } else if (value.startsWith('grid:')) {
+                    _setHomeGridColumns(int.parse(value.substring(5)));
+                  } else if (value == 'privacy') {
+                    _toggleHomePreviewPrivacy();
+                  } else if (value == 'refine') {
+                    _showHomeSearchFilters();
+                  }
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    enabled: false,
+                    child: Text('MAIS FILTROS'),
+                  ),
+                  for (final filter in const [
+                    'Capturas',
+                    'Duplicados',
+                    'Todos',
+                  ])
+                    PopupMenuItem(
+                      value: 'filter:$filter',
+                      child: Text(
+                        filter == 'Duplicados'
+                            ? 'Possíveis duplicados'
+                            : filter,
+                      ),
+                    ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
+                    enabled: false,
+                    child: Text('ORDENAR POR'),
+                  ),
+                  for (final sort in const [
+                    'Mais recentes',
+                    'Mais antigos',
+                    'Nome',
+                    'Maior tamanho',
+                  ])
+                    PopupMenuItem(value: 'sort:$sort', child: Text(sort)),
+                  const PopupMenuDivider(),
+                  for (final columns in const [2, 3, 4])
+                    PopupMenuItem(
+                      value: 'grid:$columns',
+                      child: Text('$columns colunas'),
+                    ),
+                  PopupMenuItem(
+                    value: 'privacy',
+                    child: Text(
+                      _hideHomePreviews
+                          ? 'Mostrar miniaturas'
+                          : 'Ocultar miniaturas',
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'refine',
+                    child: Text('Filtrar por período e tamanho'),
+                  ),
+                ],
+                child: Chip(
+                  avatar: const Icon(Icons.more_horiz_rounded, size: 18),
+                  label: const Text('Mais'),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (continueWatching.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 5, 16, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Continuar assistindo',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+              ),
+            ),
+          ),
+          SizedBox(
+            height: 112,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              scrollDirection: Axis.horizontal,
+              itemCount: continueWatching.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (_, index) {
+                final file = continueWatching[index];
+                return SizedBox(
+                  width: 168,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: _HomeThumbnail(
+                      file: file,
+                      repo: _repo,
+                      selected: _selectedMediaIds.contains(file.fileId),
+                      hidePreview: _hideHomePreviews,
+                      onLongPress: () => _toggleMediaSelection(file),
+                      onTap: () {
+                        if (_mediaSelectionMode) {
+                          _toggleMediaSelection(file);
+                          return;
+                        }
+                        _openHomeFile(file, visible);
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
         Expanded(
           child: RefreshIndicator(
             onRefresh: () async {
@@ -2800,7 +3032,9 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                       const SizedBox(height: 14),
                       Text(
                         _mediaQuery.isEmpty
-                            ? 'Nenhuma foto ou video nesta pasta.'
+                            ? _homeFilesFilter == 'Todos'
+                                  ? 'Suas fotos e vídeos aparecerão aqui.'
+                                  : 'Nenhum item encontrado neste filtro.'
                             : 'Nenhum resultado encontrado.',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: TCloudTheme.textSecondary),
@@ -2846,8 +3080,8 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                             physics: const NeverScrollableScrollPhysics(),
                             padding: const EdgeInsets.symmetric(horizontal: 2),
                             gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 3,
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: _homeGridColumns,
                                   crossAxisSpacing: 2,
                                   mainAxisSpacing: 2,
                                 ),
@@ -2866,6 +3100,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                                   selected: _selectedMediaIds.contains(
                                     file.fileId,
                                   ),
+                                  hidePreview: _hideHomePreviews,
                                   onLongPress: () {},
                                   onLongPressStart: (_) {
                                     _beginMediaDragSelection(file);
@@ -2894,7 +3129,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                                       MaterialPageRoute<void>(
                                         builder: (_) => MediaViewerScreen(
                                           file: file,
-                                          files: _media,
+                                          files: visible,
                                         ),
                                       ),
                                     );
@@ -5043,17 +5278,32 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
           (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
         );
 
+    final duplicateKeys = <String, int>{};
+    for (final file in _allFiles) {
+      final key = '${file.name.trim().toLowerCase()}:${file.size}';
+      duplicateKeys[key] = (duplicateKeys[key] ?? 0) + 1;
+    }
     final visibleFiles = _allFiles.where((file) {
       final trashed = _trash.contains(file.contentIdentity);
       final matchesQuery =
           query.isEmpty ||
           file.name.toLowerCase().contains(query) ||
-          file.kind.toLowerCase().contains(query);
+          file.kind.toLowerCase().contains(query) ||
+          (file.mimeType?.toLowerCase().contains(query) ?? false);
       if (_filesFilter == 'Lixeira') return trashed && matchesQuery;
       if (trashed) return false;
       final matchesType = switch (_filesFilter) {
         'Imagens' => file.isImage,
         'Vídeos' => file.isVideo,
+        'Documentos' => !file.isMedia,
+        'Capturas' =>
+          file.isImage &&
+              (file.name.toLowerCase().contains('screenshot') ||
+                  file.name.toLowerCase().contains('captura de tela')),
+        'Duplicados' =>
+          (duplicateKeys['${file.name.trim().toLowerCase()}:${file.size}'] ??
+                  0) >
+              1,
         'Offline' => _offline.any(
           (item) => item.contentIdentity == file.contentIdentity,
         ),
@@ -5116,9 +5366,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                     'Todos',
                     'Imagens',
                     'Vídeos',
-                    'Favoritos',
                     'Offline',
-                    'Lixeira',
                   ])
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
@@ -5129,10 +5377,61 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                             setState(() => _filesFilter = filter),
                       ),
                     ),
+                  PopupMenuButton<String>(
+                    tooltip: 'Mais filtros de arquivos',
+                    onSelected: (filter) =>
+                        setState(() => _filesFilter = filter),
+                    itemBuilder: (_) => [
+                      for (final filter in const [
+                        'Favoritos',
+                        'Documentos',
+                        'Capturas',
+                        'Duplicados',
+                        'Lixeira',
+                      ])
+                        PopupMenuItem(
+                          value: filter,
+                          child: Text(
+                            filter == 'Duplicados'
+                                ? 'Possíveis duplicados'
+                                : filter,
+                          ),
+                        ),
+                    ],
+                    child: Chip(
+                      avatar: const Icon(Icons.more_horiz_rounded, size: 18),
+                      label: Text(
+                        const [
+                              'Favoritos',
+                              'Documentos',
+                              'Capturas',
+                              'Duplicados',
+                              'Lixeira',
+                            ].contains(_filesFilter)
+                            ? _filesFilter == 'Duplicados'
+                                  ? 'Duplicados'
+                                  : _filesFilter
+                            : 'Mais',
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
+          if (_filesFilter == 'Duplicados')
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
+                child: Text(
+                  'Possíveis duplicados usam nome e tamanho; confira os arquivos antes de excluir.',
+                  style: TextStyle(
+                    color: TCloudTheme.textSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(18, 14, 8, 6),
@@ -5162,13 +5461,25 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                     tooltip: 'Opções',
                     onSelected: (value) {
                       if (value == 'new') _createAlbum();
-                      if (value == 'sync') _runGallerySync();
+                      if (value == 'phone') _openDeviceSpace(phone: true);
+                      if (value == 'computer') _openDeviceSpace(phone: false);
+                      if (value == 'offline') _openSection(4);
                     },
                     itemBuilder: (_) => const [
                       PopupMenuItem(value: 'new', child: Text('Nova pasta')),
+                      PopupMenuDivider(),
                       PopupMenuItem(
-                        value: 'sync',
-                        child: Text('Sincronizar agora'),
+                        value: 'phone',
+                        child: Text('Pastas do meu telefone'),
+                      ),
+                      PopupMenuItem(
+                        value: 'computer',
+                        child: Text('Pastas do meu computador'),
+                      ),
+                      PopupMenuDivider(),
+                      PopupMenuItem(
+                        value: 'offline',
+                        child: Text('Disponível offline'),
                       ),
                     ],
                   ),
@@ -5288,15 +5599,18 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
         return const FaceGroupsScreen.library();
       case 0:
       default:
-        return _tcloudGalleryHomePage();
+        return _deviceSpace == 'all' ? _mediaPage() : _tcloudGalleryHomePage();
     }
   }
 
   Future<void> _openDeviceSpace({required bool phone}) async {
+    _folderSearchController.clear();
     setState(() {
       _currentIndex = 0;
       _selectedFolderKey = 'all';
       _folderQuery = '';
+      _mediaQuery = '';
+      _showMediaSearch = false;
       _deviceSpace = phone ? 'phone' : 'computer';
     });
     await _loadFolders();
@@ -5319,6 +5633,7 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
       _currentIndex = index;
 
       if (index == 0) {
+        _deviceSpace = 'all';
         _selectedFolderKey = 'all';
         _mediaQuery = '';
         _showMediaSearch = false;
@@ -5402,83 +5717,69 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 )
               : null,
           toolbarHeight: 60,
-          title: Row(
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(7),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Image.asset(
-                  'assets/brand/tcloud-logo.png',
-                  fit: BoxFit.cover,
-                ),
-              ),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(switch (_currentIndex) {
-                      0 when _deviceSpace == 'phone' => 'Meu telefone',
-                      0 when _deviceSpace == 'computer' => 'Meu computador',
-                      0 => 'TCloud',
-                      1 => TCloudLabels.files,
-                      2 => 'Transferências',
-                      3 => TCloudLabels.settings,
-                      4 => TCloudLabels.offline,
-                      5 => 'Pessoas',
-                      _ => 'TCloud',
-                    }, style: const TextStyle(fontWeight: FontWeight.w800)),
-                    Text(
-                      _deviceSpace != 'all'
-                          ? 'Pastas desta conta'
-                          : _currentIndex == 5
-                          ? 'Pessoas nas suas fotos'
-                          : _syncingGallery
-                          ? 'Sincronizando sua nuvem'
-                          : 'Seus arquivos, em um só lugar',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          title: Text(switch (_currentIndex) {
+            0 when _deviceSpace == 'phone' => 'Meu telefone',
+            0 when _deviceSpace == 'computer' => 'Meu computador',
+            0 => 'Fotos',
+            1 => TCloudLabels.files,
+            2 => 'Transferências',
+            3 => TCloudLabels.settings,
+            4 => TCloudLabels.offline,
+            5 => 'Pessoas',
+            _ => 'TCloud',
+          }, style: const TextStyle(fontWeight: FontWeight.w700)),
           actions: [
-            if (_syncingGallery)
-              const Padding(
-                padding: EdgeInsets.only(right: 12),
-                child: Center(
-                  child: SizedBox.square(
-                    dimension: 19,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-              )
-            else
+            if (_currentIndex == 0 && _deviceSpace == 'all')
               IconButton(
-                tooltip: 'Sincronizar agora',
-                onPressed: () => _runGallerySync(),
-                icon: const Icon(Icons.cloud_sync_outlined),
+                tooltip: _showMediaSearch
+                    ? 'Fechar pesquisa'
+                    : 'Pesquisar fotos e vídeos',
+                onPressed: () {
+                  setState(() {
+                    _showMediaSearch = !_showMediaSearch;
+                    if (_showMediaSearch) {
+                      _mediaQuery = _folderQuery;
+                    } else {
+                      _mediaQuery = '';
+                      _folderQuery = '';
+                      _folderSearchController.clear();
+                    }
+                  });
+                },
+                icon: Icon(
+                  _showMediaSearch
+                      ? Icons.search_off_rounded
+                      : Icons.search_rounded,
+                ),
               ),
+            if (_currentIndex == 0 || _currentIndex == 1)
+              if (_syncingGallery)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 14),
+                  child: Center(
+                    child: SizedBox.square(
+                      dimension: 19,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                )
+              else
+                IconButton(
+                  tooltip: 'Sincronizar agora',
+                  onPressed: () => _runGallerySync(),
+                  icon: const Icon(Icons.cloud_sync_outlined),
+                ),
             const SizedBox(width: 4),
           ],
         ),
         body: _body(),
-        floatingActionButton: _mediaSelectionMode
+        floatingActionButton:
+            _mediaSelectionMode || (_currentIndex != 0 && _currentIndex != 1)
             ? null
             : FloatingActionButton.extended(
                 onPressed: _showPrimaryActions,
                 icon: const Icon(Icons.add_rounded),
-                label: const Text('Novo'),
+                label: Text(_currentIndex == 0 ? 'Adicionar' : 'Novo'),
               ),
         bottomNavigationBar: _currentIndex == 0 && _mediaSelectionMode
             ? _MediaSelectionHotbar(
@@ -5503,9 +5804,9 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                 onDestinationSelected: _selectNavigationDestination,
                 destinations: const [
                   NavigationDestination(
-                    icon: Icon(Icons.home_outlined),
-                    selectedIcon: Icon(Icons.home_rounded),
-                    label: 'Início',
+                    icon: Icon(Icons.photo_library_outlined),
+                    selectedIcon: Icon(Icons.photo_library_rounded),
+                    label: 'Fotos',
                   ),
                   NavigationDestination(
                     icon: Icon(Icons.folder_outlined),
@@ -5518,9 +5819,9 @@ class _PreviewHomeScreenState extends State<PreviewHomeScreen>
                     label: 'Pessoas',
                   ),
                   NavigationDestination(
-                    icon: Icon(Icons.swap_vert_circle_outlined),
+                    icon: Icon(Icons.swap_vert_rounded),
                     selectedIcon: Icon(Icons.swap_vert_circle_rounded),
-                    label: 'Atividade',
+                    label: 'Transferências',
                   ),
                   NavigationDestination(
                     icon: Icon(Icons.settings_outlined),
