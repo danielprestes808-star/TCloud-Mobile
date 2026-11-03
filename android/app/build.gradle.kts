@@ -15,6 +15,16 @@ if (keystorePropertiesFile.exists()) {
         keystoreProperties.load(it)
     }
 }
+val releaseSigningProperties = listOf(
+    "keyAlias",
+    "keyPassword",
+    "storeFile",
+    "storePassword",
+)
+val hasReleaseSigningConfig = releaseSigningProperties.all {
+    !keystoreProperties.getProperty(it).isNullOrBlank()
+}
+
 android {
     namespace = "com.tcloud.mobile"
     compileSdk = flutter.compileSdkVersion
@@ -36,23 +46,23 @@ android {
         versionName = flutter.versionName
     }
 
-    signingConfigs {
-        create("release") {
-            keyAlias =
-                keystoreProperties["keyAlias"] as String
-            keyPassword =
-                keystoreProperties["keyPassword"] as String
-            storeFile =
-                file(keystoreProperties["storeFile"] as String)
-            storePassword =
-                keystoreProperties["storePassword"] as String
+    if (hasReleaseSigningConfig) {
+        signingConfigs {
+            create("release") {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
         }
     }
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName(
+                if (hasReleaseSigningConfig) "release" else "debug",
+            )
             // Estabilidade RC: evita crash de WorkManager/Room sob R8.
             isMinifyEnabled = false
             isShrinkResources = false
