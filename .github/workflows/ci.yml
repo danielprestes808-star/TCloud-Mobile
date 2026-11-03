@@ -26,6 +26,8 @@ jobs:
           flutter-version: '3.44.9'
           channel: stable
           cache: true
+      - name: Configure placeholder Telegram credentials for CI
+        run: cp lib/telegram/telegram_credentials.example.dart lib/telegram/telegram_credentials.g.dart
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
